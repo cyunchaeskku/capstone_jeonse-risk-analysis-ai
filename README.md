@@ -12,7 +12,7 @@
 |               | REST API                   | 공공 데이터 연동 (law.go.kr 등)   |
 | **RDB**       | PostgreSQL                 | 분석 이력 저장                  |
 | **Vector DB** | FAISS                      | 법률 문서 벡터 인덱스 저장 및 유사도 검색  |
-| **AI / LLM**  | GPT-5 mini (OpenAI API)    | Rule 결과 자연어 설명, RAG 답변 생성 |
+| **AI / LLM**  | GPT-5.4 nano (OpenAI API)    | Rule 결과 자연어 설명, RAG 답변 생성 |
 |               | text-embedding-3-small     | 법률 문서 벡터 임베딩              |
 | **RAG**       | LangChain                  | RAG 파이프라인 구성              |
 | **문서 파싱**     | PyMuPDF                    | PDF 텍스트 추출                |
