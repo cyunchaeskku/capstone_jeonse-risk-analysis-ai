@@ -20,10 +20,13 @@
 - 초기 백엔드 저장소는 메모리 기반으로 두고 후속 단계에서 DB로 확장한다.
 - QA는 백엔드 무상태 방식으로 유지하고, 프론트가 최근 2턴 문맥만 전달한다.
 - 챗봇은 전세 계약/위험/법률 보조에 집중하는 OpenAI 기반 LangChain 챗봇으로 구현한다.
+- 법령 데이터 저장용 PostgreSQL 스키마를 확정했다: `laws`, `law_relations`, `law_articles` 3개 테이블.
+- DB는 `RDB/docker-compose.yml`로 PostgreSQL 16 컨테이너를 운영하고, Alembic으로 마이그레이션을 관리한다.
+- SQLAlchemy 모델은 `backend/app/models/law.py`, 엔진/세션은 `backend/app/db.py`에 정의한다.
+- `korean-law-mcp`를 Claude Desktop MCP 서버로 등록 완료했다 (Remote URL, OC: cyunchaeskku).
 
 ## Open Decisions
 
-- `korean-law-mcp`를 실시간 조회 경로로 쓸지 여부
 - `legalize-kr`를 초기 RAG 인덱싱 원천 데이터로 채택할지 여부
 - 법령 업데이트 동기화 주기와 검증 기준
 - `POST /analyses`를 비동기 작업 큐로 전환할 시점
@@ -43,12 +46,14 @@
 
 ## Next Recommended Steps
 
-1. OpenAI API 키를 환경 변수로 설정하고 챗봇 응답 품질을 점검한다.
-2. QA 레이어에 실제 법령/판례 검색을 붙일지 RAG 방향을 결정한다.
+1. `korean-law-mcp` CLI로 대상 법령(주택임대차보호법, 시행령, 민법 임대차편, 공인중개사법)을 조회해 `laws` + `law_articles` 테이블에 ingest하는 스크립트를 작성한다.
+2. `legalize-kr`를 RAG 원천 데이터로 채택할지 결정하고, 채택 시 ingest 전략을 ADR로 분리한다.
 3. 분석 결과 화면과 `analysis_id` 기반 후속 질문 흐름을 연결한다.
 
 ## Notes For Next Session
 
-- 외부 법령 데이터 소스 2개가 문서에 반영되어 있다.
-- 구현 전, MCP 연동과 법령 저장소 ingest 전략을 ADR로 분리하는 것이 적절하다.
+- `korean-law-mcp` Claude Desktop 등록 완료. CLI(`LAW_OC=cyunchaeskku korean-law ...`)로도 동작 확인됨.
+- PostgreSQL 컨테이너(`jeonse_postgres`)가 로컬에 올라가 있으며 3개 테이블 마이그레이션 완료 상태.
+- 다음 세션 시작 전 `docker compose -f RDB/docker-compose.yml up -d`로 컨테이너 재기동 필요할 수 있음.
 - 현재 QA는 비-RAG LangChain 챗봇이며, 실제 법령 근거 회수는 아직 구현되지 않았다.
+- legalize-kr ingest 전략은 결정되지 않았다.
