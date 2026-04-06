@@ -1,0 +1,29 @@
+# Backend API
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Configuration
+python-dotenv
+pydantic-settings
+
+# Database
+sqlalchemy
+psycopg[binary]
+alembic
+
+# HTTP clients for public data / external APIs
+httpx
+requests
+
+# OpenAI / RAG
+openai
+langchain
+langchain-openai
+faiss-cpu
+
+# Document parsing
+PyMuPDF
+
+# Optional high-precision document parsing integration
+upstage

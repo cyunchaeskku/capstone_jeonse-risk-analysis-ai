@@ -1,0 +1,9 @@
+.env
+.venv/
+.claude/
+AGETNS.md
+CLAUDE.md
+node_modules/
+dist/
+__pycache__/
+*.pyc

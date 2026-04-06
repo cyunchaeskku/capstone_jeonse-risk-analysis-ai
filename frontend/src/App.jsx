@@ -1,0 +1,21 @@
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { ChatbotProvider } from './context/ChatbotContext';
+import AppShell from './layout/AppShell';
+import AnalysisNewPage from './pages/AnalysisNewPage';
+import HomePage from './pages/HomePage';
+
+function App() {
+  return (
+    <ChatbotProvider>
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/analysis/new" element={<AnalysisNewPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </ChatbotProvider>
+  );
+}
+
+export default App;
