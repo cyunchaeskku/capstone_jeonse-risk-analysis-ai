@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    data_go_kr_api_key: str | None = Field(default=None, alias="DATA_GO_KR_API_KEY")
     naver_maps_client_id: str | None = Field(default=None, alias="NAVER_MAPS_CLIENT_ID")
     naver_maps_client_secret: str | None = Field(default=None, alias="NAVER_MAPS_CLIENT_SECRET")
     openai_model: str = Field(default="gpt-5.4-nano", alias="OPENAI_MODEL")

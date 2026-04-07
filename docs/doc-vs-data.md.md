@@ -52,6 +52,13 @@
 → 활용:
 - 보증금 / 시세 비율 계산 (깡통주택 여부 판단)
 
+#### 링크
+**공공데이터포털**
+- [국토교통부_아파트 전월세 실거래가 자료](https://www.data.go.kr/data/15126474/openapi.do)
+- [국토교통부_오피스텔 전월세 실거래가 자료](https://www.data.go.kr/data/15126475/openapi.do)
+- [국토교통부_연립다세대 전월세 실거래가 자료](https://www.data.go.kr/data/15126473/openapi.do)
+- [국토교통부_단독/다가구 전월세 실거래가 자료](https://www.data.go.kr/data/15126472/openapi.do)
+
 ---
 
 ### 2.2 권리관계 및 채권 구조 데이터

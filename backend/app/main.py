@@ -1,3 +1,8 @@
+import asyncio
+import json
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
 import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -89,6 +94,105 @@ async def geocode(query: str = Query(..., description="검색할 주소")):
         return {"result": None}
     first = addresses[0]
     return {"result": {"x": first["x"], "y": first["y"], "address": first["roadAddress"] or first["jibunAddress"]}}
+
+
+_LAWD_CD_MAP: dict = json.loads(
+    (Path(__file__).parent / "data" / "lawd_cd_map.json").read_text(encoding="utf-8")
+)
+
+
+_PROPERTY_TYPE_MAP = {
+    # (서비스명, 메서드명, 건물명XML필드, 면적XML필드)
+    "apt":  ("RTMSDataSvcAptRent",  "getRTMSDataSvcAptRent",  "aptNm",     "excluUseAr"),
+    "offi": ("RTMSDataSvcOffiRent", "getRTMSDataSvcOffiRent", "offiNm",    "excluUseAr"),
+    "rh":   ("RTMSDataSvcRHRent",   "getRTMSDataSvcRHRent",   "mhouseNm",  "excluUseAr"),
+    "sh":   ("RTMSDataSvcSHRent",   "getRTMSDataSvcSHRent",   "houseType", "totalFloorAr"),
+}
+
+
+def _iter_months(start: str, end: str) -> list[str]:
+    """'202511' ~ '202601' 사이의 YYYYMM 목록 반환 (최대 24개월)"""
+    sy, sm = int(start[:4]), int(start[4:])
+    ey, em = int(end[:4]), int(end[4:])
+    months = []
+    y, m = sy, sm
+    while (y * 100 + m) <= (ey * 100 + em):
+        months.append(f"{y}{str(m).zfill(2)}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+        if len(months) >= 24:
+            break
+    return months
+
+
+async def _fetch_month(client: httpx.AsyncClient, svc_name: str, method_name: str, building_field: str, area_field: str, lawd_cd: str, ymd: str, dong: str) -> list[dict]:
+    url = (
+        f"https://apis.data.go.kr/1613000/{svc_name}/{method_name}"
+        f"?serviceKey={settings.data_go_kr_api_key}"
+        f"&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000&pageNo=1"
+    )
+    response = await client.get(url, timeout=10.0)
+    if response.status_code != 200:
+        return []
+    root = ET.fromstring(response.text)
+    if root.findtext(".//resultCode") != "000":
+        return []
+    items = root.findall(".//item")
+    result = []
+    for item in items:
+        if dong and dong not in (item.findtext("umdNm") or ""):
+            continue
+        result.append({
+            "buildingNm": item.findtext(building_field),
+            "umdNm": item.findtext("umdNm"),
+            "excluUseAr": item.findtext(area_field),
+            "deposit": item.findtext("deposit"),
+            "monthlyRent": item.findtext("monthlyRent"),
+            "floor": item.findtext("floor"),
+            "contractType": item.findtext("contractType"),
+            "dealYear": item.findtext("year"),
+            "dealMonth": item.findtext("month"),
+            "dealDay": item.findtext("day"),
+        })
+    return result
+
+
+@app.get("/jeonse-data")
+async def get_jeonse_data(
+    sido: str = Query(..., description="시도명 (예: 경기도)"),
+    sigungu: str = Query(..., description="시군구명 (예: 수원시 권선구)"),
+    dong: str = Query(default="", description="읍면동명 (예: 탑동, 생략 시 전체)"),
+    deal_from: str = Query(..., description="시작 계약년월 6자리 (예: 202511)"),
+    deal_to: str = Query(..., description="종료 계약년월 6자리 (예: 202601)"),
+    property_type: str = Query(default="apt", description="매물 종류: apt(아파트), offi(오피스텔), rh(연립/다세대), sh(단독/다가구)"),
+):
+    if not settings.data_go_kr_api_key:
+        raise HTTPException(status_code=500, detail="DATA_GO_KR_API_KEY가 설정되지 않았습니다.")
+
+    if property_type not in _PROPERTY_TYPE_MAP:
+        raise HTTPException(status_code=400, detail=f"알 수 없는 매물 종류: {property_type}")
+
+    sigungu_map = _LAWD_CD_MAP.get(sido)
+    if sigungu_map is None:
+        raise HTTPException(status_code=400, detail=f"알 수 없는 시도명: {sido}")
+    lawd_cd = sigungu_map.get(sigungu)
+    if lawd_cd is None:
+        raise HTTPException(status_code=400, detail=f"알 수 없는 시군구명: {sigungu}")
+
+    if deal_from > deal_to:
+        raise HTTPException(status_code=400, detail="deal_from이 deal_to보다 클 수 없습니다.")
+
+    months = _iter_months(deal_from, deal_to)
+    svc_name, method_name, building_field, area_field = _PROPERTY_TYPE_MAP[property_type]
+
+    async with httpx.AsyncClient() as client:
+        tasks = [_fetch_month(client, svc_name, method_name, building_field, area_field, lawd_cd, ymd, dong) for ymd in months]
+        results_per_month = await asyncio.gather(*tasks)
+
+    result = [item for month_items in results_per_month for item in month_items]
+    return {"lawd_cd": lawd_cd, "deal_from": deal_from, "deal_to": deal_to, "total": len(result), "items": result}
 
 
 @app.post("/qa", response_model=QaResponse)
