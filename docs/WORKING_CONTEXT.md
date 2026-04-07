@@ -24,6 +24,8 @@
 - DB는 `RDB/docker-compose.yml`로 PostgreSQL 16 컨테이너를 운영하고, Alembic으로 마이그레이션을 관리한다.
 - SQLAlchemy 모델은 `backend/app/models/law.py`, 엔진/세션은 `backend/app/db.py`에 정의한다.
 - `korean-law-mcp`를 Claude Desktop MCP 서버로 등록 완료했다 (Remote URL, OC: cyunchaeskku).
+- `scripts/make_vectorDB.py`를 추가해 `laws` + `law_articles`를 조문 단위로 LangChain FAISS 벡터DB(`vectorDB/laws_faiss`)로 생성할 수 있게 했다.
+- 벡터 문서 metadata에 `citation_label`(`법령명 + 조문번호`)을 포함해 검색 결과에서 곧바로 인용 표시가 가능하다.
 
 ## Open Decisions
 
@@ -46,7 +48,7 @@
 
 ## Next Recommended Steps
 
-1. `korean-law-mcp` CLI로 대상 법령(주택임대차보호법, 시행령, 민법 임대차편, 공인중개사법)을 조회해 `laws` + `law_articles` 테이블에 ingest하는 스크립트를 작성한다.
+1. `scripts/make_vectorDB.py` 산출물(`index.faiss`, `documents.jsonl`)을 QA 검색 경로에 연결한다.
 2. `legalize-kr`를 RAG 원천 데이터로 채택할지 결정하고, 채택 시 ingest 전략을 ADR로 분리한다.
 3. 분석 결과 화면과 `analysis_id` 기반 후속 질문 흐름을 연결한다.
 

@@ -1,0 +1,19 @@
+{
+  "created_at_utc": "2026-04-07T08:24:52.166545+00:00",
+  "embedding_model": "text-embedding-3-small",
+  "embedding_dimension": 1536,
+  "document_count": 200,
+  "source": {
+    "database_url": "postgresql+psycopg://postgres:postgres@localhost:5432/jeonse_db",
+    "tables": [
+      "laws",
+      "law_articles"
+    ]
+  },
+  "files": {
+    "index": "index.faiss",
+    "docstore": "index.pkl",
+    "documents": "documents.jsonl",
+    "id_map": "id_map.json"
+  }
+}
