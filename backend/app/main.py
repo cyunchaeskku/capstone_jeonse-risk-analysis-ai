@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException
+import httpx
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .chatbot import ChatbotService
@@ -65,6 +66,29 @@ def get_analysis(analysis_id: str) -> AnalysisDetailResponse:
             },
         )
     return item
+
+
+@app.get("/geocode")
+async def geocode(query: str = Query(..., description="검색할 주소")):
+    if not settings.naver_maps_client_id or not settings.naver_maps_client_secret:
+        raise HTTPException(status_code=500, detail="Naver Maps API 키가 설정되지 않았습니다.")
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            "https://maps.apigw.ntruss.com/map-geocode/v2/geocode",
+            params={"query": query},
+            headers={
+                "X-NCP-APIGW-API-KEY-ID": settings.naver_maps_client_id,
+                "X-NCP-APIGW-API-KEY": settings.naver_maps_client_secret,
+            },
+        )
+    if response.status_code != 200:
+        raise HTTPException(status_code=502, detail="Naver Geocoding API 호출 실패")
+    data = response.json()
+    addresses = data.get("addresses", [])
+    if not addresses:
+        return {"result": None}
+    first = addresses[0]
+    return {"result": {"x": first["x"], "y": first["y"], "address": first["roadAddress"] or first["jibunAddress"]}}
 
 
 @app.post("/qa", response_model=QaResponse)

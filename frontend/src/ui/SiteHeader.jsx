@@ -3,6 +3,7 @@ import { Link, NavLink } from 'react-router-dom';
 const navigationItems = [
   { label: '메인', to: '/' },
   { label: '새 분석', to: '/analysis/new' },
+  { label: '지도', to: '/map' },
 ];
 
 function SiteHeader() {

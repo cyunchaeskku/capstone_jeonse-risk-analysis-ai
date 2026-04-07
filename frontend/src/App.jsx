@@ -4,6 +4,7 @@ import AppShell from './layout/AppShell';
 import AnalysisNewPage from './pages/AnalysisNewPage';
 import ChatbotPage from './pages/ChatbotPage';
 import HomePage from './pages/HomePage';
+import MapPage from './pages/MapPage';
 
 function App() {
   return (
@@ -13,6 +14,7 @@ function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/analysis/new" element={<AnalysisNewPage />} />
           <Route path="/chatbot" element={<ChatbotPage />} />
+          <Route path="/map" element={<MapPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
