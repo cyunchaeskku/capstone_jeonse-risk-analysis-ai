@@ -3,10 +3,10 @@ import { useEffect, useRef, useState } from 'react';
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
 const COLUMNS = {
-  apt:  { buildingNm: '단지명',    headers: ['단지명',    '동', '전용면적(㎡)', '보증금(만원)', '월세(만원)', '층', '계약유형'] },
-  offi: { buildingNm: '오피스텔명', headers: ['오피스텔명', '동', '전용면적(㎡)', '보증금(만원)', '월세(만원)', '층', '계약유형'] },
-  rh:   { buildingNm: '건물명',    headers: ['건물명',    '동', '전용면적(㎡)', '보증금(만원)', '월세(만원)', '층', '계약유형'] },
-  sh:   { buildingNm: '건물유형',   headers: ['건물유형',  '동', '연면적(㎡)',   '보증금(만원)', '월세(만원)', '계약유형'] },
+  apt:  { buildingNm: '단지명',    headers: ['단지명',    '동', '전용면적(㎡)', '보증금(만원)', '월세(만원)', '층', '계약유형', '전월세구분'] },
+  offi: { buildingNm: '오피스텔명', headers: ['오피스텔명', '동', '전용면적(㎡)', '보증금(만원)', '월세(만원)', '층', '계약유형', '전월세구분'] },
+  rh:   { buildingNm: '건물명',    headers: ['건물명',    '동', '전용면적(㎡)', '보증금(만원)', '월세(만원)', '층', '계약유형', '전월세구분'] },
+  sh:   { buildingNm: '건물유형',   headers: ['건물유형',  '동', '연면적(㎡)',   '보증금(만원)', '월세(만원)', '계약유형', '전월세구분'] },
 };
 
 const CURRENT_YMD = (() => {
@@ -15,6 +15,24 @@ const CURRENT_YMD = (() => {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   return `${y}${m}`;
 })();
+
+function parseMonthlyRent(value) {
+  if (value === null || value === undefined) return 0;
+  const normalized = String(value).replaceAll(',', '').trim();
+  if (!normalized) return 0;
+  const parsed = Number(normalized);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function getLeaseType(monthlyRent) {
+  return parseMonthlyRent(monthlyRent) > 0 ? '월세' : '전세';
+}
+
+function renderMonthlyRent(monthlyRent) {
+  if (monthlyRent === null || monthlyRent === undefined) return '-';
+  const normalized = String(monthlyRent).trim();
+  return normalized ? normalized : '-';
+}
 
 function MapPage() {
   const mapRef = useRef(null);
@@ -206,9 +224,10 @@ function MapPage() {
                     <td className="px-3 py-2">{item.umdNm}</td>
                     <td className="px-3 py-2">{item.excluUseAr}</td>
                     <td className="px-3 py-2">{item.deposit}</td>
-                    <td className="px-3 py-2">{item.monthlyRent || '-'}</td>
+                    <td className="px-3 py-2">{renderMonthlyRent(item.monthlyRent)}</td>
                     {propertyType !== 'sh' && <td className="px-3 py-2">{item.floor}</td>}
                     <td className="px-3 py-2">{item.contractType || '-'}</td>
+                    <td className="px-3 py-2">{getLeaseType(item.monthlyRent)}</td>
                   </tr>
                 ))}
               </tbody>
