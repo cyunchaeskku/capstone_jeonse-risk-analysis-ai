@@ -2,6 +2,7 @@ import asyncio
 import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from urllib.parse import unquote
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
@@ -37,6 +38,169 @@ app.add_middleware(
 
 service = AnalysisService()
 chatbot_service = ChatbotService()
+
+_BUILDING_HUB_BASE_URL = "http://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
+_BUILDING_HUB_ROWS = 1000
+
+
+def _normalize_text(value: str | None) -> str:
+    if not value:
+        return ""
+    return (
+        value.replace(" ", "")
+        .replace("번지", "")
+        .replace("호", "")
+        .replace("(", "")
+        .replace(")", "")
+    )
+
+
+def _summarize_building_item(item: dict[str, str]) -> dict[str, str]:
+    address = item.get("newPlatPlc") or item.get("platPlc") or ""
+    return {
+        "building_name": item.get("bldNm", "").strip() or address,
+        "address": address.strip(),
+        "lot_address": item.get("platPlc", "").strip(),
+        "regstr_kind": item.get("regstrKindCdNm", "").strip(),
+        "building_type": item.get("mainPurpsCdNm", "").strip(),
+        "detail_use": item.get("etcPurps", "").strip(),
+        "structure": item.get("strctCdNm", "").strip(),
+        "roof": item.get("roofCdNm", "").strip(),
+        "floors": item.get("grndFlrCnt", "").strip(),
+        "basements": item.get("ugrndFlrCnt", "").strip(),
+        "households": item.get("hhldCnt", "").strip(),
+        "family_count": item.get("fmlyCnt", "").strip(),
+        "use_approval_date": item.get("useAprDay", "").strip(),
+        "completion_date": item.get("stcnsDay", "").strip(),
+        "permission_date": item.get("pmsDay", "").strip(),
+        "resistant_quake": item.get("rserthqkDsgnApplyYn", "").strip(),
+        "legal_code": item.get("bjdongCd", "").strip(),
+        "sigungu_code": item.get("sigunguCd", "").strip(),
+    }
+
+
+async def _reverse_geocode(client: httpx.AsyncClient, lat: float, lng: float) -> dict[str, str]:
+    response = await client.get(
+        "https://maps.apigw.ntruss.com/map-reversegeocode/v2/gc",
+        params={
+            "coords": f"{lng},{lat}",
+            "orders": "legalcode,admcode,addr",
+            "output": "json",
+        },
+        headers={
+            "X-NCP-APIGW-API-KEY-ID": settings.naver_maps_client_id,
+            "X-NCP-APIGW-API-KEY": settings.naver_maps_client_secret,
+        },
+        timeout=10.0,
+    )
+    if response.status_code != 200:
+        raise HTTPException(status_code=502, detail="Naver reverse geocoding API 호출 실패")
+
+    payload = response.json()
+    results = payload.get("results") or []
+    if not results:
+        return {}
+
+    legal = next((result for result in results if result.get("name") == "legalcode"), None)
+    addr = next((result for result in results if result.get("name") == "addr"), None)
+    adm = next((result for result in results if result.get("name") == "admcode"), None)
+
+    legal_code = ((legal or {}).get("code") or {}).get("id") or ""
+    road_address = (((addr or {}).get("region") or {}).get("area1") or {}).get("name", "").strip()
+    road_address = " ".join(
+        part
+        for part in [
+            (((addr or {}).get("region") or {}).get("area1") or {}).get("name", "").strip(),
+            (((addr or {}).get("region") or {}).get("area2") or {}).get("name", "").strip(),
+            (((addr or {}).get("region") or {}).get("area3") or {}).get("name", "").strip(),
+            (((addr or {}).get("region") or {}).get("area4") or {}).get("name", "").strip(),
+        ]
+        if part
+    ).strip()
+    land = (legal or {}).get("land") or {}
+    land_number_1 = (land.get("number1") or "").strip()
+    land_number_2 = (land.get("number2") or "").strip()
+    lot_number = land_number_1
+    if land_number_2 and land_number_2 != "0":
+        lot_number = f"{land_number_1}-{land_number_2}"
+    jibun_address = " ".join(
+        part
+        for part in [
+            (((legal or {}).get("region") or {}).get("area1") or {}).get("name", "").strip(),
+            (((legal or {}).get("region") or {}).get("area2") or {}).get("name", "").strip(),
+            (((legal or {}).get("region") or {}).get("area3") or {}).get("name", "").strip(),
+            (((legal or {}).get("region") or {}).get("area4") or {}).get("name", "").strip(),
+            lot_number,
+        ]
+        if part
+    ).strip()
+    adm_code = ((adm or {}).get("code") or {}).get("id") or ""
+
+    return {
+        "legal_code": legal_code,
+        "sigungu_cd": legal_code[:5] if len(legal_code) >= 5 else "",
+        "bjdong_cd": legal_code[5:] if len(legal_code) >= 10 else "",
+        "road_address": road_address,
+        "jibun_address": jibun_address,
+        "adm_code": adm_code,
+    }
+
+
+async def _fetch_building_register_page(
+    client: httpx.AsyncClient,
+    sigungu_cd: str,
+    bjdong_cd: str,
+    page_no: int,
+) -> tuple[int, list[dict[str, str]]]:
+    if not settings.data_go_kr_api_key:
+        raise HTTPException(status_code=500, detail="DATA_GO_KR_API_KEY가 설정되지 않았습니다.")
+
+    response = await client.get(
+        _BUILDING_HUB_BASE_URL,
+        params={
+            "serviceKey": unquote(settings.data_go_kr_api_key),
+            "sigunguCd": sigungu_cd,
+            "bjdongCd": bjdong_cd,
+            "platGbCd": "0",
+            "numOfRows": _BUILDING_HUB_ROWS,
+            "pageNo": page_no,
+        },
+        timeout=20.0,
+    )
+    if response.status_code != 200:
+        return 0, []
+
+    root = ET.fromstring(response.text)
+    if root.findtext(".//resultCode") != "00":
+        return 0, []
+
+    total_count = int(root.findtext(".//totalCount") or "0")
+    items: list[dict[str, str]] = []
+    for item in root.findall(".//item"):
+        items.append({child.tag: (child.text or "") for child in list(item)})
+    return total_count, items
+
+
+async def _fetch_building_register_items(
+    client: httpx.AsyncClient,
+    sigungu_cd: str,
+    bjdong_cd: str,
+) -> tuple[int, list[dict[str, str]]]:
+    total_count, first_page_items = await _fetch_building_register_page(client, sigungu_cd, bjdong_cd, 1)
+    if total_count <= len(first_page_items):
+        return total_count, first_page_items
+
+    total_pages = (total_count + _BUILDING_HUB_ROWS - 1) // _BUILDING_HUB_ROWS
+    tasks = [
+        _fetch_building_register_page(client, sigungu_cd, bjdong_cd, page_no)
+        for page_no in range(2, total_pages + 1)
+    ]
+    results = await asyncio.gather(*tasks) if tasks else []
+
+    items = list(first_page_items)
+    for _, page_items in results:
+        items.extend(page_items)
+    return total_count, items
 
 
 @app.get("/", response_model=RootResponse)
@@ -94,6 +258,60 @@ async def geocode(query: str = Query(..., description="검색할 주소")):
         return {"result": None}
     first = addresses[0]
     return {"result": {"x": first["x"], "y": first["y"], "address": first["roadAddress"] or first["jibunAddress"]}}
+
+
+@app.get("/building-register")
+async def get_building_register(
+    lat: float = Query(..., description="위도"),
+    lng: float = Query(..., description="경도"),
+):
+    if not settings.naver_maps_client_id or not settings.naver_maps_client_secret:
+        raise HTTPException(status_code=500, detail="Naver Maps API 키가 설정되지 않았습니다.")
+    if not settings.data_go_kr_api_key:
+        raise HTTPException(status_code=500, detail="DATA_GO_KR_API_KEY가 설정되지 않았습니다.")
+
+    async with httpx.AsyncClient() as client:
+        location = await _reverse_geocode(client, lat, lng)
+        sigungu_cd = location.get("sigungu_cd", "")
+        bjdong_cd = location.get("bjdong_cd", "")
+        if not sigungu_cd or not bjdong_cd:
+            raise HTTPException(status_code=404, detail="법정동 코드를 찾지 못했습니다.")
+
+        total_count, items = await _fetch_building_register_items(client, sigungu_cd, bjdong_cd)
+        if not items:
+            return {
+                "location": location,
+                "total_count": total_count,
+                "matched_count": 0,
+                "selected": None,
+                "candidates": [],
+            }
+
+        target_tokens = [
+            _normalize_text(location.get("jibun_address")),
+            _normalize_text(location.get("road_address")),
+        ]
+
+        candidates: list[dict[str, str]] = []
+        for item in items:
+            item_tokens = [
+                _normalize_text(item.get("platPlc")),
+                _normalize_text(item.get("newPlatPlc")),
+            ]
+            if any(target and any(target in item_token or item_token in target for item_token in item_tokens) for target in target_tokens):
+                candidates.append(item)
+
+        selected_item = candidates[0] if candidates else items[0]
+        summary = _summarize_building_item(selected_item)
+        candidate_source = candidates if candidates else items[:20]
+
+        return {
+            "location": location,
+            "total_count": total_count,
+            "matched_count": len(candidates) if candidates else 1,
+            "selected": summary,
+            "candidates": [_summarize_building_item(item) for item in candidate_source],
+        }
 
 
 _LAWD_CD_MAP: dict = json.loads(
