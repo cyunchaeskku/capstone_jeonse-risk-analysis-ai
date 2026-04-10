@@ -6,7 +6,7 @@
 
 :root {
   color: #1f2937;
-  background: #fffaf4;
+  background: #f6fbf2;
   font-family: 'SUIT', 'Pretendard Variable', sans-serif;
 }
 
@@ -18,8 +18,8 @@ body {
   margin: 0;
   min-width: 320px;
   background:
-    linear-gradient(180deg, rgba(255, 250, 244, 0.88), rgba(255, 250, 244, 1)),
-    #fffaf4;
+    linear-gradient(180deg, rgba(246, 251, 242, 0.9), rgba(246, 251, 242, 1)),
+    #f6fbf2;
 }
 
 #root {

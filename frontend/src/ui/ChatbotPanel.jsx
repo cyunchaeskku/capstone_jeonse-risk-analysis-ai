@@ -22,9 +22,9 @@ function ChatbotPanel({
 
   return (
     <section
-      className={`flex w-full flex-col overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-[0_28px_80px_rgba(31,41,55,0.18)] backdrop-blur ${className}`}
+      className={`flex w-full flex-col overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-[0_28px_80px_rgba(18,70,51,0.18)] backdrop-blur ${className}`}
     >
-      <header className="flex items-center justify-between border-b border-slate-200 bg-sand px-5 py-4">
+      <header className="flex items-center justify-between border-b border-coral/15 bg-sand px-5 py-4">
         <div>
           <p className="text-sm font-semibold tracking-[0.18em] text-coral uppercase">Legal Assistant</p>
           <h2 className="mt-1 text-lg font-semibold text-slate-900">전세 리스크 챗봇</h2>
@@ -34,7 +34,7 @@ function ChatbotPanel({
             <button
               type="button"
               onClick={onRequestFullscreen}
-              className="rounded-full border border-slate-300 px-3 py-1 text-sm font-medium text-slate-600 transition hover:border-slate-400 hover:text-slate-900"
+              className="rounded-full border border-coral/20 px-3 py-1 text-sm font-medium text-slate-600 transition hover:border-coral/40 hover:text-ink"
             >
               전체화면
             </button>
@@ -44,7 +44,7 @@ function ChatbotPanel({
               type="button"
               aria-label="챗봇 닫기"
               onClick={onRequestClose}
-              className="rounded-full border border-slate-300 px-3 py-1 text-sm font-medium text-slate-600 transition hover:border-slate-400 hover:text-slate-900"
+              className="rounded-full border border-coral/20 px-3 py-1 text-sm font-medium text-slate-600 transition hover:border-coral/40 hover:text-ink"
             >
               닫기
             </button>
@@ -61,7 +61,7 @@ function ChatbotPanel({
                   ? 'rounded-br-md bg-ink text-white'
                   : message.isError
                     ? 'rounded-bl-md bg-red-50 text-red-700'
-                    : 'rounded-bl-md bg-slate-100 text-slate-700'
+                    : 'rounded-bl-md bg-coral/10 text-slate-700'
               }`}
             >
               <p>{message.text}</p>
@@ -77,7 +77,7 @@ function ChatbotPanel({
         ))}
         {isSending ? (
           <article className="flex justify-start">
-            <div className="max-w-[85%] rounded-3xl rounded-bl-md bg-slate-100 px-4 py-3 text-sm leading-6 text-slate-700">
+            <div className="max-w-[85%] rounded-3xl rounded-bl-md bg-coral/10 px-4 py-3 text-sm leading-6 text-slate-700">
               <p>응답을 생성하는 중입니다...</p>
               <p className="mt-2 text-[11px] text-slate-400">잠시만 기다려주세요</p>
             </div>
@@ -85,11 +85,11 @@ function ChatbotPanel({
         ) : null}
       </div>
 
-      <form onSubmit={handleSubmit} className="border-t border-slate-200 bg-white px-4 py-4">
+      <form onSubmit={handleSubmit} className="border-t border-coral/15 bg-white px-4 py-4">
         <label htmlFor="chatbot-message" className="sr-only">
           챗봇 메시지 입력
         </label>
-        <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-2">
+        <div className="rounded-[1.5rem] border border-coral/15 bg-sand p-2">
           <textarea
             id="chatbot-message"
             ref={inputRef}
@@ -108,7 +108,7 @@ function ChatbotPanel({
             <button
               type="submit"
               disabled={isSending}
-              className="rounded-full bg-coral px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#d96545] disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-full bg-coral px-4 py-2 text-sm font-semibold text-ink transition hover:bg-[#a9dc63] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isSending ? '전송 중...' : '전송'}
             </button>

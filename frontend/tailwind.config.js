@@ -4,12 +4,12 @@ export default {
   theme: {
     extend: {
       colors: {
-        sand: '#f6efe7',
-        cream: '#fffaf4',
-        ink: '#1f2937',
-        coral: '#e97352',
-        sage: '#91a08b',
-        wheat: '#e5d1b8',
+        sand: '#eef4df',
+        cream: '#f6fbf2',
+        ink: '#124633',
+        coral: '#8dc63f',
+        sage: '#4f7f5e',
+        wheat: '#d9e9bf',
       },
       fontFamily: {
         sans: ['"SUIT Variable"', '"Pretendard Variable"', 'sans-serif'],

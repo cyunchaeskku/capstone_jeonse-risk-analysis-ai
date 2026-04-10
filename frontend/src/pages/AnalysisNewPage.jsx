@@ -52,49 +52,49 @@ function AnalysisNewPage() {
       <section className="mt-12 grid gap-8 lg:grid-cols-[1fr_320px]">
         <div className="space-y-6">
           {uploadSections.map((section) => (
-            <article key={section.title} className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+            <article key={section.title} className="rounded-[2rem] border border-coral/15 bg-white p-6 shadow-sm">
               <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
                 <div className="max-w-xl">
-                  <p className="text-sm font-semibold tracking-[0.18em] text-slate-400 uppercase">Upload Zone</p>
+                  <p className="text-sm font-semibold tracking-[0.18em] text-coral uppercase">Upload Zone</p>
                   <h2 className="mt-3 text-2xl font-semibold tracking-[-0.03em] text-slate-900">
                     {section.title}
                   </h2>
                   <p className="mt-3 text-base leading-7 text-slate-600">{section.description}</p>
                 </div>
-                <button className="inline-flex min-w-36 items-center justify-center rounded-full border border-slate-300 bg-slate-50 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-white">
+                <button className="inline-flex min-w-36 items-center justify-center rounded-full border border-coral/25 bg-coral/10 px-5 py-3 text-sm font-semibold text-ink transition hover:border-coral/40 hover:bg-coral/15">
                   파일 선택
                 </button>
               </div>
-              <div className="mt-5 rounded-[1.5rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-sm text-slate-500">
+              <div className="mt-5 rounded-[1.5rem] border border-dashed border-coral/25 bg-sand px-5 py-8 text-sm text-slate-500">
                 드래그 앤 드롭 영역. 실제 업로드 연결 전까지는 레이아웃과 상태 표시 자리만 제공합니다.
               </div>
             </article>
           ))}
         </div>
 
-        <aside className="h-fit rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+        <aside className="h-fit rounded-[2rem] border border-coral/15 bg-white p-6 shadow-sm">
           <p className="text-sm font-semibold tracking-[0.18em] text-coral uppercase">Draft Inputs</p>
           <div className="mt-5 space-y-4">
             <div>
               <label className="text-sm font-medium text-slate-700">매물 주소</label>
-              <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-400">
+              <div className="mt-2 rounded-2xl border border-coral/15 bg-sand px-4 py-3 text-sm text-slate-400">
                 서울시 강남구 예시로 00
               </div>
             </div>
             <div>
               <label className="text-sm font-medium text-slate-700">보증금</label>
-              <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-400">
+              <div className="mt-2 rounded-2xl border border-coral/15 bg-sand px-4 py-3 text-sm text-slate-400">
                 000,000,000원
               </div>
             </div>
             <div>
               <label className="text-sm font-medium text-slate-700">계약 예정일</label>
-              <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-400">
+              <div className="mt-2 rounded-2xl border border-coral/15 bg-sand px-4 py-3 text-sm text-slate-400">
                 YYYY.MM.DD
               </div>
             </div>
           </div>
-          <button className="mt-8 w-full rounded-full bg-ink px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-800">
+          <button className="mt-8 w-full rounded-full bg-ink px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#0f523d]">
             분석 준비 시작
           </button>
         </aside>

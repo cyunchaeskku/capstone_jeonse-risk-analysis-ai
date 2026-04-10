@@ -19,7 +19,7 @@ function SiteHeader() {
             to={item.to}
             className={({ isActive }) =>
               `rounded-full px-4 py-2 text-sm font-medium transition ${
-                isActive ? 'bg-ink text-white' : 'text-slate-600 hover:text-slate-900'
+                isActive ? 'bg-ink text-white' : 'text-slate-600 hover:bg-coral/10 hover:text-ink'
               }`
             }
           >

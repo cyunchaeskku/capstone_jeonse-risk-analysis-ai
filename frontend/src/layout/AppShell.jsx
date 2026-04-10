@@ -8,7 +8,7 @@ function AppShell() {
 
   return (
     <div className="min-h-screen bg-cream text-ink">
-      <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top_left,_rgba(233,115,82,0.18),_transparent_32%),radial-gradient(circle_at_top_right,_rgba(145,160,139,0.18),_transparent_28%)]" />
+      <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top_left,_rgba(141,198,63,0.2),_transparent_32%),radial-gradient(circle_at_top_right,_rgba(18,70,51,0.16),_transparent_28%)]" />
       <SiteHeader />
       <Outlet />
       {showFloatingChatbot ? <FloatingChatbot /> : null}

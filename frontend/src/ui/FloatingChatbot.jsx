@@ -37,7 +37,7 @@ function FloatingChatbot() {
           type="button"
           aria-label={isOpen ? '챗봇 닫기' : '챗봇 열기'}
           onClick={toggleChat}
-          className="group flex h-16 w-16 items-center justify-center rounded-full bg-ink text-white shadow-[0_18px_40px_rgba(31,41,55,0.28)] transition hover:-translate-y-0.5 hover:bg-slate-800"
+          className="group flex h-16 w-16 items-center justify-center rounded-full bg-ink text-white shadow-[0_18px_40px_rgba(18,70,51,0.28)] transition hover:-translate-y-0.5 hover:bg-[#0f523d]"
         >
           <span className="text-xl font-semibold">{isOpen ? '×' : 'AI'}</span>
         </button>

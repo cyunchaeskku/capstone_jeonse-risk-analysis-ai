@@ -130,7 +130,7 @@ function MapPage() {
   }
 
   const inputCls =
-    'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-ink placeholder:text-slate-400 focus:border-coral focus:outline-none';
+    'rounded-lg border border-coral/20 bg-white px-3 py-2 text-sm text-ink placeholder:text-slate-400 focus:border-coral focus:outline-none';
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-6 py-8">
@@ -191,7 +191,7 @@ function MapPage() {
         <button
           onClick={handleSearch}
           disabled={loading}
-          className="rounded-lg bg-ink px-5 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+          className="rounded-lg bg-ink px-5 py-2 text-sm font-medium text-white transition hover:bg-[#0f523d] disabled:opacity-50"
         >
           {loading ? '검색 중…' : '검색'}
         </button>
@@ -199,16 +199,16 @@ function MapPage() {
 
       {error && <p className="text-sm text-red-500">{error}</p>}
 
-      <div ref={mapRef} className="h-[400px] w-full rounded-xl border border-slate-200 shadow-sm" />
+      <div ref={mapRef} className="h-[400px] w-full rounded-xl border border-coral/15 shadow-sm" />
 
       {rentData && rentData.total > 0 && (
         <div className="flex flex-col gap-2">
           <p className="text-sm text-slate-500">
             {sido} {sigungu} {dong} · {dealFrom} ~ {dealTo} · 총 {rentData.total}건
           </p>
-          <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <div className="overflow-x-auto rounded-xl border border-coral/15">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-xs text-slate-500">
+              <thead className="bg-sand text-xs text-slate-500">
                 <tr>
                   {COLUMNS[propertyType].headers.map((h) => (
                     <th key={h} className="px-3 py-2 text-left font-medium">
@@ -217,9 +217,9 @@ function MapPage() {
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-coral/10">
                 {rentData.items.map((item, i) => (
-                  <tr key={i} className="hover:bg-slate-50">
+                  <tr key={i} className="hover:bg-coral/5">
                     <td className="px-3 py-2">{item.buildingNm}</td>
                     <td className="px-3 py-2">{item.umdNm}</td>
                     <td className="px-3 py-2">{item.excluUseAr}</td>
