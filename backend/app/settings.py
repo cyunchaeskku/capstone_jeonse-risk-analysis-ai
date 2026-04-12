@@ -7,7 +7,15 @@ class Settings(BaseSettings):
     data_go_kr_api_key: str | None = Field(default=None, alias="DATA_GO_KR_API_KEY")
     naver_maps_client_id: str | None = Field(default=None, alias="NAVER_MAPS_CLIENT_ID")
     naver_maps_client_secret: str | None = Field(default=None, alias="NAVER_MAPS_CLIENT_SECRET")
-    openai_model: str = Field(default="gpt-5.4-nano", alias="OPENAI_MODEL")
+    naver_search_client_id: str | None = Field(default=None, alias="NAVER_SEARCH_CLIENT_ID")
+    naver_search_client_secret: str | None = Field(default=None, alias="NAVER_SEARCH_CLIENT_SECRET")
+    openai_model: str = Field(default="gpt-4.1-nano", alias="OPENAI_MODEL")
+    vector_db_path: str = Field(default="vectorDB/laws_faiss", alias="VECTOR_DB_PATH")
+    vector_db_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        alias="VECTOR_DB_EMBEDDING_MODEL",
+    )
+    vector_db_top_k: int = Field(default=4, alias="VECTOR_DB_TOP_K")
     database_url: str = Field(
         default="postgresql+psycopg://postgres:postgres@localhost:5432/jeonse_db",
         alias="DATABASE_URL",

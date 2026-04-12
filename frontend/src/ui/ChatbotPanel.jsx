@@ -72,6 +72,26 @@ function ChatbotPanel({
               >
                 {message.timestamp}
               </p>
+              {message.role === 'assistant' && Array.isArray(message.sources) && message.sources.length > 0 ? (
+                <div className="mt-3 space-y-2 border-t border-white/50 pt-3">
+                  <p className="text-[11px] font-semibold tracking-[0.14em] text-slate-500 uppercase">
+                    출처 문서
+                  </p>
+                  <div className="space-y-2">
+                    {message.sources.map((source) => (
+                      <div key={`${source.citation_label}-${source.article_number ?? source.jo_code ?? 'source'}`} className="rounded-2xl bg-white/75 px-3 py-2 text-[11px] leading-5 text-slate-600">
+                        <p className="font-medium text-slate-700">{source.citation_label}</p>
+                        {source.article_title ? (
+                          <p className="mt-0.5 text-slate-500">{source.article_title}</p>
+                        ) : null}
+                        {source.excerpt ? (
+                          <p className="mt-1 whitespace-pre-wrap text-slate-500">{source.excerpt}</p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </article>
         ))}

@@ -33,6 +33,8 @@ function buildAssistantMessage(text, options = {}) {
     text,
     timestamp: '방금 전',
     isError: options.isError ?? false,
+    references: options.references ?? [],
+    sources: options.sources ?? [],
   };
 }
 
@@ -87,7 +89,13 @@ export function ChatbotProvider({ children }) {
       }
 
       const data = await response.json();
-      setMessages((current) => [...current, buildAssistantMessage(data.answer)]);
+      setMessages((current) => [
+        ...current,
+        buildAssistantMessage(data.answer, {
+          references: data.references ?? [],
+          sources: data.sources ?? [],
+        }),
+      ]);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Unknown error');
       setMessages((current) => [

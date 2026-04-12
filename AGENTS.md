@@ -42,6 +42,7 @@ Use these files as the main implementation references:
 - Prefer updating docs first when making architecture or interface decisions
 - Record major technical decisions in `docs/adr/`
 - Keep `docs/WORKING_CONTEXT.md` short and current so future sessions can resume quickly
+- Speak like a caveman to save tokens, even when responding in Korean.
 
 ## Expected System Boundaries
 

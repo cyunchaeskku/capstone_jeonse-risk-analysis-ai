@@ -88,6 +88,45 @@
   - `candidates`
   - `candidates`는 스크롤 가능한 후보 목록 렌더링을 위한 요약 배열이다
 
+### `POST /listing-checks/analyze`
+
+- 목적: 선택한 매물 정보 기준으로 규칙 기반 점검 결과와 설명을 반환한다
+- 초기 구현 규칙:
+  - 보증금 / 시세 값이 80% 초과인지 점검
+  - 건축물 용도가 주거용인지 점검
+- 중요 제약:
+  - `위반건축물 여부`는 v1에서 표시하지 않는다
+  - LLM은 재판정하지 않고, 구조화된 규칙 결과를 설명만 한다
+- 요청 필드:
+  - `property_type`
+  - `listing_name`
+  - `deposit_krw`
+  - `market_price_krw` (선택, 없으면 mock provider 사용)
+  - `selected_rent_item`
+  - `selected_building`
+  - `extra_signals`
+- 응답 필드:
+  - `checks[]` (`code`, `title`, `status`, `reason`, `evidence`)
+  - `summary` (`overall_status`, `triggered_checks`)
+  - `llm_explanation`
+
+### `GET /listing-checks/search`
+
+- 목적: 주소/건물명 단일 검색으로 점검에 필요한 후보 데이터를 한 번에 조회한다
+- 동작:
+  - 지오코딩으로 대상 위치를 찾는다
+  - 같은 위치 기준 건축물대장 후보를 조회한다
+  - 같은 검색어 기준 최근 1년 거래 내역을 조회한다
+  - 최근 거래 1건을 시세(임시)로 반환한다
+- 요청 필드:
+  - `query` (주소 또는 건물명)
+  - `property_type`
+- 응답 필드:
+  - `location`
+  - `building`
+  - `rent`
+  - `market_price`
+
 ## 공통 응답 규칙
 
 - 오류 응답은 코드, 메시지, 사용자 조치 힌트를 포함한다.
