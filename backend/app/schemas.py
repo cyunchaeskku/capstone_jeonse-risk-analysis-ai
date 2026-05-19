@@ -37,6 +37,29 @@ class AnalysisCreateResponse(BaseModel):
     normalized_summary: dict[str, object]
 
 
+class RegistryMaxClaimItem(BaseModel):
+    amount_krw: int
+    raw_text: str
+    page: int | None = None
+
+
+class RegistryParseResponse(BaseModel):
+    filename: str
+    max_claim_amount_krw: int | None = None
+    max_claim_amounts: list[RegistryMaxClaimItem] = Field(default_factory=list)
+    status: Literal["parsed", "needs_review"]
+    message: str
+
+
+class RegistryInspectResponse(BaseModel):
+    filename: str
+    max_claim_amount_krw: int | None = None
+    max_claim_amounts: list[RegistryMaxClaimItem] = Field(default_factory=list)
+    inspection: dict[str, Any] = Field(default_factory=dict)
+    status: Literal["inspected", "needs_review"]
+    message: str
+
+
 class RiskFactor(BaseModel):
     code: str
     title: str

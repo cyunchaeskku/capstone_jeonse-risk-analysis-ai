@@ -9,12 +9,14 @@ from typing import Any, Protocol
 from urllib.parse import unquote
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from .chatbot import ChatbotService
+from .registry_inspector import inspect_registry_text
+from .registry_parser import parse_registry_pdf
 from .schemas import (
     AnalysisCreateRequest,
     AnalysisCreateResponse,
@@ -26,6 +28,9 @@ from .schemas import (
     ListingCheckSummary,
     QaRequest,
     QaResponse,
+    RegistryInspectResponse,
+    RegistryMaxClaimItem,
+    RegistryParseResponse,
     RootResponse,
 )
 from .services import AnalysisService
@@ -374,6 +379,92 @@ def health_check() -> HealthResponse:
 @app.post("/analyses", response_model=AnalysisCreateResponse)
 def create_analysis(payload: AnalysisCreateRequest) -> AnalysisCreateResponse:
     return service.create_analysis(payload)
+
+
+def _registry_max_claim_items(result) -> list[RegistryMaxClaimItem]:
+    return [
+        RegistryMaxClaimItem(
+            amount_krw=item.amount_krw,
+            raw_text=item.raw_text,
+            page=item.page,
+        )
+        for item in result.max_claim_amounts
+    ]
+
+
+@app.post("/registry/parse", response_model=RegistryParseResponse)
+async def parse_registry_document(file: UploadFile = File(...)) -> RegistryParseResponse:
+    filename = file.filename or "registry.pdf"
+    if file.content_type and file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="PDF 파일만 업로드할 수 있습니다.")
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="PDF 파일만 업로드할 수 있습니다.")
+
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="빈 PDF 파일입니다.")
+
+    result = parse_registry_pdf(pdf_bytes)
+    if result.max_claim_amount_krw is None:
+        return RegistryParseResponse(
+            filename=filename,
+            max_claim_amount_krw=None,
+            max_claim_amounts=[],
+            status="needs_review",
+            message="등기부등본에서 채권최고액을 찾지 못했습니다.",
+        )
+
+    return RegistryParseResponse(
+        filename=filename,
+        max_claim_amount_krw=result.max_claim_amount_krw,
+        max_claim_amounts=_registry_max_claim_items(result),
+        status="parsed",
+        message="채권최고액을 추출했습니다.",
+    )
+
+
+@app.post("/registry/inspect", response_model=RegistryInspectResponse)
+async def inspect_registry_document(file: UploadFile = File(...)) -> RegistryInspectResponse:
+    filename = file.filename or "registry.pdf"
+    if file.content_type and file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="PDF 파일만 업로드할 수 있습니다.")
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="PDF 파일만 업로드할 수 있습니다.")
+
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="빈 PDF 파일입니다.")
+
+    result = parse_registry_pdf(pdf_bytes)
+    try:
+        inspection = inspect_registry_text(result.text)
+    except RuntimeError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "REGISTRY_INSPECTOR_NOT_CONFIGURED",
+                "message": str(error),
+                "action_hint": "OPENAI_API_KEY를 설정한 뒤 서버를 다시 시작하세요.",
+            },
+        ) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "REGISTRY_INSPECTION_FAILED",
+                "message": "등기부등본 특이사항 추출 중 오류가 발생했습니다.",
+                "action_hint": "잠시 후 다시 시도하거나 원문을 직접 확인하세요.",
+            },
+        ) from error
+
+    return RegistryInspectResponse(
+        filename=filename,
+        max_claim_amount_krw=result.max_claim_amount_krw,
+        max_claim_amounts=_registry_max_claim_items(result),
+        inspection=inspection,
+        status="needs_review" if inspection.get("needs_human_review") else "inspected",
+        message="등기부등본 특이사항을 추출했습니다.",
+    )
 
 
 @app.get("/analyses/{analysis_id}", response_model=AnalysisDetailResponse)

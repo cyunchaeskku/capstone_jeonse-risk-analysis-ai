@@ -40,6 +40,9 @@
 - 실거래가 API 승인 전까지 시세는 provider 인터페이스 기반 mock 방식으로 계산한다.
 - `POST /listing-checks/analyze`를 추가했고, LLM은 규칙 결과 설명만 수행하도록 제한했다.
 - `GET /listing-checks/search`를 추가해 최근 1년 거래를 조회하고, 가장 최근 거래를 시세(임시)로 계산해 내려준다.
+- `AGENTS.md`를 현재 코드베이스 기준으로 최신화했다. 이제 React/FastAPI/RDB/scripts/vectorDB 구조, 구현된 사용자 흐름, API surface, 환경 변수, 알려진 gap을 포함한다.
+- `POST /registry/parse`를 추가해 등기사항증명서 PDF에서 `채권최고액`을 추출하는 기초 parser를 연결했다. 여러 금액이 있으면 마지막 등장 금액을 유효 후보값으로 반환한다.
+- `POST /registry/inspect`를 추가해 등기 텍스트를 LLM에 전달하고 표제부/갑구/을구 특이사항을 JSON으로 추출한다. 프론트 새 분석 탭은 이 endpoint를 호출해 채권최고액과 findings를 표시한다.
 
 ## Open Decisions
 
@@ -47,6 +50,7 @@
 - 법령 업데이트 동기화 주기와 검증 기준
 - `POST /analyses`를 비동기 작업 큐로 전환할 시점
 - 파일 업로드 저장 전략과 DB 스키마 도입 방식
+- 등기 parser가 추출한 `채권최고액` 변경 이력을 어떤 기준으로 최종 유효 권리로 확정할지 여부
 - 법령/판례 RAG를 언제 도입하고 어떤 데이터 소스를 우선 연결할지
 - 건축물대장 응답에서 후보가 여러 개일 때 선택 우선순위를 더 정교하게 만들지 여부
 
@@ -61,6 +65,8 @@
 - `docs/specs/legal-qa.md`
 - `docs/adr/0002-qa-routing-langgraph.md`
 - `backend/README.md`
+- `RDB/README.md`
+- `scripts/README.md`
 
 ## Next Recommended Steps
 

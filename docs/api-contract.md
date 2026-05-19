@@ -32,6 +32,45 @@
   - `status`
   - `normalized_summary`
 
+### `POST /registry/parse`
+
+- 목적: 업로드한 부동산 등기사항증명서 PDF에서 위험 분석 입력값을 추출한다
+- 초기 구현:
+  - PDF text layer 또는 embedded ToUnicode CMap 기반 텍스트 추출
+  - `채권최고액` 금액 추출
+  - 여러 금액이 있으면 마지막으로 등장한 금액을 현재 유효 후보값으로 반환
+- 요청:
+  - `multipart/form-data`
+  - `file`: PDF 파일
+- 응답 필드:
+  - `filename`
+  - `max_claim_amount_krw`
+  - `max_claim_amounts[]` (`amount_krw`, `raw_text`, `page`)
+  - `status` (`parsed`, `needs_review`)
+  - `message`
+
+### `POST /registry/inspect`
+
+- 목적: 업로드한 등기사항증명서 PDF에서 deterministic 추출값과 LLM 기반 특이사항을 함께 반환한다
+- 동작:
+  - `POST /registry/parse`와 같은 PDF 텍스트 추출 및 `채권최고액` 추출을 먼저 수행한다
+  - 추출 텍스트를 LLM에 전달해 표제부, 갑구, 을구 특이사항을 JSON으로 추출한다
+  - LLM은 위험도 공식 계산이나 최종 계약 판단을 하지 않는다
+- 요청:
+  - `multipart/form-data`
+  - `file`: PDF 파일
+- 응답 필드:
+  - `filename`
+  - `max_claim_amount_krw`
+  - `max_claim_amounts[]`
+  - `inspection.property_section`
+  - `inspection.ownership_section`
+  - `inspection.rights_section`
+  - `inspection.findings[]`
+  - `inspection.needs_human_review`
+  - `status` (`inspected`, `needs_review`)
+  - `message`
+
 ### `GET /analyses/{analysisId}`
 
 - 목적: 분석 결과를 조회한다

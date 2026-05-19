@@ -16,6 +16,8 @@ uvicorn backend.app.main:app --reload
 - `GET /`
 - `GET /health`
 - `POST /analyses`
+- `POST /registry/parse`
+- `POST /registry/inspect`
 - `GET /analyses/{analysis_id}`
 - `GET /jeonse-data`
 - `GET /building-register`
@@ -87,6 +89,8 @@ alembic -c RDB/alembic.ini current
 
 - 현재 구현은 초기 연결용 데모로, 결과 저장은 메모리 기반이다.
 - 위험도 평가는 매우 단순한 규칙 예시만 포함한다.
+- 부동산 등기사항증명서 PDF 파서는 현재 `채권최고액` 추출용 기초 구현이다.
+- `POST /registry/inspect`는 등기 텍스트를 OpenAI 모델에 전달해 표제부/갑구/을구 특이사항을 구조화한다.
 - 법률 QA는 LangGraph로 질문을 분기하고, 단순 질문은 바로 답변하며 법령 질문만 FAISS 벡터 검색을 거친다.
 - 벡터 검색용 인덱스는 `vectorDB/laws_faiss`를 기본 경로로 사용한다.
 - 프론트 개발 서버 연동을 위해 기본 CORS가 `localhost:5173`에 열려 있다.

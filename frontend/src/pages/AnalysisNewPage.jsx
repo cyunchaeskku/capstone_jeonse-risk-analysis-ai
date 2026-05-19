@@ -1,3 +1,7 @@
+import { useRef, useState } from 'react';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+
 const uploadSections = [
   {
     title: '계약서 초안 또는 사본',
@@ -20,6 +24,162 @@ const checklist = [
 ];
 
 function AnalysisNewPage() {
+  const registryInputRef = useRef(null);
+  const [registryFileName, setRegistryFileName] = useState('');
+  const [registryParseResult, setRegistryParseResult] = useState(null);
+  const [registryUploadStatus, setRegistryUploadStatus] = useState('idle');
+  const [registryError, setRegistryError] = useState('');
+
+  const isRegistryUploading = registryUploadStatus === 'uploading';
+
+  async function handleRegistryFileChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setRegistryFileName(file.name);
+    setRegistryParseResult(null);
+    setRegistryError('');
+
+    if (file.type && file.type !== 'application/pdf') {
+      setRegistryUploadStatus('idle');
+      setRegistryError('PDF 파일만 업로드할 수 있습니다.');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    setRegistryUploadStatus('uploading');
+
+    try {
+      const response = await fetch(`${API_BASE}/registry/inspect`, {
+        method: 'POST',
+        body: formData,
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const message =
+          typeof payload.detail === 'string'
+            ? payload.detail
+            : payload.detail?.message ?? `업로드 실패 (${response.status})`;
+        throw new Error(message);
+      }
+
+      setRegistryParseResult(payload);
+      setRegistryUploadStatus(payload.status ?? 'needs_review');
+    } catch (error) {
+      setRegistryUploadStatus('idle');
+      setRegistryError(error instanceof Error ? error.message : '등기부등본 파싱에 실패했습니다.');
+    } finally {
+      event.target.value = '';
+    }
+  }
+
+  function formatKrw(value) {
+    if (value === null || value === undefined) return '-';
+    return `${Number(value).toLocaleString('ko-KR')}원`;
+  }
+
+  function renderUploadAction(section) {
+    if (section.title !== '등기부등본') {
+      return (
+        <button
+          type="button"
+          className="inline-flex min-w-36 items-center justify-center rounded-full border border-coral/25 bg-coral/10 px-5 py-3 text-sm font-semibold text-ink transition hover:border-coral/40 hover:bg-coral/15"
+        >
+          준비 중
+        </button>
+      );
+    }
+
+    return (
+      <>
+        <input
+          ref={registryInputRef}
+          type="file"
+          accept="application/pdf,.pdf"
+          className="sr-only"
+          onChange={handleRegistryFileChange}
+        />
+        <button
+          type="button"
+          onClick={() => registryInputRef.current?.click()}
+          disabled={isRegistryUploading}
+          className="inline-flex min-w-36 items-center justify-center rounded-full border border-coral/25 bg-coral/10 px-5 py-3 text-sm font-semibold text-ink transition hover:border-coral/40 hover:bg-coral/15 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isRegistryUploading ? '분석 중' : 'PDF 선택'}
+        </button>
+      </>
+    );
+  }
+
+  function renderUploadState(section) {
+    if (section.title !== '등기부등본') {
+      return (
+        <div className="mt-5 rounded-[1.5rem] border border-dashed border-coral/25 bg-sand px-5 py-8 text-sm text-slate-500">
+          이후 단계에서 연결할 문서 영역입니다.
+        </div>
+      );
+    }
+
+    return (
+      <div className="mt-5 rounded-[1.5rem] border border-dashed border-coral/25 bg-sand px-5 py-6">
+        <div className="flex flex-col gap-2 text-sm text-slate-600">
+          <span>{registryFileName || '등기사항증명서 PDF를 선택하세요.'}</span>
+          {isRegistryUploading && <span className="font-medium text-ink">업로드 후 채권최고액 추출 중</span>}
+          {registryError && <span className="font-medium text-red-600">{registryError}</span>}
+        </div>
+
+        {registryParseResult && (
+          <div className="mt-5 rounded-2xl border border-sage/20 bg-white p-5">
+            <p className="text-xs font-semibold tracking-[0.16em] text-sage uppercase">Parsed Result</p>
+            <div className="mt-3 text-3xl font-semibold tracking-[-0.03em] text-ink">
+              {formatKrw(registryParseResult.max_claim_amount_krw)}
+            </div>
+            <p className="mt-2 text-sm leading-6 text-slate-600">{registryParseResult.message}</p>
+            {registryParseResult.max_claim_amounts?.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {registryParseResult.max_claim_amounts.map((item, index) => (
+                  <div
+                    key={`${item.amount_krw}-${index}`}
+                    className="flex flex-col gap-1 rounded-xl bg-sand px-4 py-3 text-sm text-slate-700 md:flex-row md:items-center md:justify-between"
+                  >
+                    <span>{item.raw_text}</span>
+                    <span className="font-semibold text-ink">{formatKrw(item.amount_krw)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {registryParseResult.inspection?.findings?.length > 0 && (
+              <div className="mt-5 border-t border-sage/10 pt-5">
+                <p className="text-sm font-semibold text-ink">특이사항</p>
+                <div className="mt-3 space-y-3">
+                  {registryParseResult.inspection.findings.map((finding, index) => (
+                    <div key={`${finding.title}-${index}`} className="rounded-xl bg-sand px-4 py-3">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                        <p className="font-semibold text-ink">{finding.title}</p>
+                        <span className="w-fit rounded-full bg-white px-3 py-1 text-xs font-semibold text-sage">
+                          {finding.severity}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">{finding.explanation}</p>
+                      {finding.recommended_action && (
+                        <p className="mt-2 text-sm font-medium leading-6 text-ink">{finding.recommended_action}</p>
+                      )}
+                      {finding.evidence && (
+                        <p className="mt-2 text-xs leading-5 text-slate-500">근거: {finding.evidence}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <main className="mx-auto w-full max-w-7xl px-6 pb-20 pt-6 lg:px-10 lg:pb-24 lg:pt-10">
       <section className="grid gap-8 lg:grid-cols-[1.15fr_0.85fr]">
@@ -61,13 +221,9 @@ function AnalysisNewPage() {
                   </h2>
                   <p className="mt-3 text-base leading-7 text-slate-600">{section.description}</p>
                 </div>
-                <button className="inline-flex min-w-36 items-center justify-center rounded-full border border-coral/25 bg-coral/10 px-5 py-3 text-sm font-semibold text-ink transition hover:border-coral/40 hover:bg-coral/15">
-                  파일 선택
-                </button>
+                {renderUploadAction(section)}
               </div>
-              <div className="mt-5 rounded-[1.5rem] border border-dashed border-coral/25 bg-sand px-5 py-8 text-sm text-slate-500">
-                드래그 앤 드롭 영역. 실제 업로드 연결 전까지는 레이아웃과 상태 표시 자리만 제공합니다.
-              </div>
+              {renderUploadState(section)}
             </article>
           ))}
         </div>
