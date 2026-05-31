@@ -146,3 +146,4 @@ class ListingCheckAnalyzeResponse(BaseModel):
     checks: list[ListingCheckResult]
     summary: ListingCheckSummary
     llm_explanation: str
+    risk_score: int

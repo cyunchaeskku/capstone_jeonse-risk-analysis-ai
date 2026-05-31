@@ -17,6 +17,9 @@ REGISTRY_INSPECTION_SYSTEM_PROMPT = """
 - 텍스트에 명시된 내용만 근거로 사용한다.
 - 위험도 공식 계산은 하지 않는다.
 - deterministic parser가 계산해야 할 값을 임의로 만들지 않는다.
+- 수치가 원문에 있으면 반드시 금액/면적/층수 등 구체적 숫자를 explanation 또는 evidence에 포함한다.
+- 좋은 신호도 findings에 포함한다. 위험 요소만 출력하지 않는다.
+- 좋은 신호는 severity를 "info"로 두고, 왜 좋은 신호인지 짧게 설명한다.
 - 말소사항 포함 문서에서는 말소된 권리와 현재 유효해 보이는 권리를 구분한다.
 - 텍스트만으로 말소 여부가 불확실하면 is_cancelled를 null로 둔다.
 - 개인정보는 필요한 최소 범위만 사용하고 주민등록번호 뒷자리는 절대 출력하지 않는다.
@@ -35,6 +38,8 @@ REGISTRY_INSPECTION_SYSTEM_PROMPT = """
   "고시원", "다중생활시설", "근린생활시설", "상가", "업무용 오피스텔", "오피스텔(업무용)"
 - 위험 용도 단어가 있으면 전세보증보험 가입 제한, 전입신고 또는 주거 적합성 문제가 생길 수 있음을 경고한다.
 - "근린생활시설"이 주거처럼 사용되는 경우 근생빌라 가능성을 경고한다.
+- 주거용도가 명확히 확인되면 좋은 신호로 findings에 포함한다.
+- 주거용도가 아닌 용도(예: 고시원, 사무소, 근린생활시설, 업무시설)가 확인되면 해당 용도명을 반드시 포함해 경고한다.
 
 2. 갑구 검토
 - 현재 최종 소유자를 추출한다.
@@ -54,7 +59,19 @@ REGISTRY_INSPECTION_SYSTEM_PROMPT = """
 - 근저당권, 전세권, 임차권등기, 지상권 등 소유권 외 권리를 탐지한다.
 - 채권최고액은 발견된 원문과 금액을 함께 기록한다.
 - 변경 등기로 채권최고액이 바뀐 경우 변경 후 금액 후보를 함께 표시한다.
+- 근저당권이나 채권최고액을 설명할 때는 "현재 채권최고액 3,360,000,000원"처럼 숫자를 반드시 포함한다.
+- 채권최고액이 크다/작다 같은 평가는 현재 건물 시세가 없으면 단정하지 않는다. 대신 "시세 입력 후 위험도 계산 필요"라고 안내한다.
 - 말소된 근저당권과 유효해 보이는 근저당권을 구분한다.
+- 을구에 권리 기록이 없거나 근저당권이 확인되지 않으면 좋은 신호로 findings에 포함한다.
+
+좋은 신호 예시:
+- "현재 건물 용도가 공동주택/아파트/다세대주택 등 주거용으로 확인됩니다. 이는 전입신고와 보증보험 검토 측면에서 좋은 신호입니다."
+- "갑구에서 압류, 가압류, 가처분, 경매개시결정, 신탁 같은 소유권 제한 단어가 확인되지 않습니다. 이는 좋은 신호입니다."
+- "을구에서 근저당권이 확인되지 않습니다. 선순위 담보권 부담이 낮을 가능성이 있어 좋은 신호입니다."
+
+나쁜 신호 예시:
+- "현재 채권최고액 3,360,000,000원이 확인됩니다. 시세, 내 보증금, 선순위보증금을 함께 입력해 위험도 계산이 필요합니다."
+- "건물 용도에 고시원, 사무소가 확인됩니다. 일반 주거용 계약과 다를 수 있어 전입신고, 보증보험 가능 여부를 확인해야 합니다."
 
 출력 JSON schema:
 {
@@ -118,6 +135,10 @@ REGISTRY_INSPECTION_USER_PROMPT_TEMPLATE = """
 위 system 규칙에 따라 전세계약 전 위험 검토용 특이사항을 JSON으로 추출하라.
 말소 여부가 불확실하면 is_cancelled를 false로 단정하지 말고 null로 표시하라.
 원문에 없는 정보는 null 또는 빈 배열로 둬라.
+deterministic parser가 추출한 채권최고액 후보도 함께 참고하라. 이 금액을 언급할 때는 반드시 숫자를 포함하라.
+
+채권최고액 후보:
+{max_claim_context}
 
 등기 텍스트:
 ---
@@ -126,7 +147,7 @@ REGISTRY_INSPECTION_USER_PROMPT_TEMPLATE = """
 """.strip()
 
 
-def inspect_registry_text(registry_text: str) -> dict[str, Any]:
+def inspect_registry_text(registry_text: str, max_claim_amounts: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     if not settings.openai_api_key or not settings.openai_api_key.strip():
         raise RuntimeError("OPENAI_API_KEY is not configured.")
     if not registry_text.strip():
@@ -140,7 +161,12 @@ def inspect_registry_text(registry_text: str) -> dict[str, Any]:
     response = model.invoke(
         [
             SystemMessage(content=REGISTRY_INSPECTION_SYSTEM_PROMPT),
-            HumanMessage(content=REGISTRY_INSPECTION_USER_PROMPT_TEMPLATE.format(registry_text=registry_text)),
+            HumanMessage(
+                content=REGISTRY_INSPECTION_USER_PROMPT_TEMPLATE.format(
+                    registry_text=registry_text,
+                    max_claim_context=_format_max_claim_context(max_claim_amounts or []),
+                )
+            ),
         ]
     )
     content = response.content if isinstance(response.content, str) else json.dumps(response.content, ensure_ascii=False)
@@ -169,6 +195,21 @@ def _coerce_inspection_payload(content: str) -> dict[str, Any]:
     payload.setdefault("findings", [])
     payload.setdefault("needs_human_review", True)
     return payload
+
+
+def _format_max_claim_context(max_claim_amounts: list[dict[str, Any]]) -> str:
+    if not max_claim_amounts:
+        return "- 없음"
+    lines = []
+    for item in max_claim_amounts:
+        amount = item.get("amount_krw")
+        raw_text = item.get("raw_text") or ""
+        page = item.get("page")
+        amount_text = f"{int(amount):,}원" if isinstance(amount, int) else "금액 확인 필요"
+        page_text = f"page {page}" if page else "page unknown"
+        lines.append(f"- {amount_text} ({page_text}): {raw_text}")
+    lines.append("- 여러 후보가 있으면 마지막 후보를 현재 유효 후보로 보되, 확정이 필요하다고 표현한다.")
+    return "\n".join(lines)
 
 
 def _strip_code_fence(content: str) -> str:

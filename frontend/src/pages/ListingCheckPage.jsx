@@ -381,12 +381,7 @@ function ListingCheckPage() {
 
           {analysisResult ? (
             <div className="mt-4 space-y-3">
-              <div className="rounded-lg border border-coral/15 bg-coral/5 px-3 py-2">
-                <p className="text-xs text-slate-500">종합 결과</p>
-                <p className={`mt-1 text-sm font-semibold ${statusTextClass(analysisResult.summary?.overall_status)}`}>
-                  {statusLabel(analysisResult.summary?.overall_status)}
-                </p>
-              </div>
+              <RiskScoreGauge score={analysisResult.risk_score ?? 0} overallStatus={analysisResult.summary?.overall_status} />
 
               <div className="space-y-2">
                 {(analysisResult.checks || []).map((check) => (
@@ -414,6 +409,37 @@ function ListingCheckPage() {
         </aside>
       </section>
     </main>
+  );
+}
+
+function riskScoreColor(score) {
+  if (score <= 30) return { bar: 'bg-emerald-500', text: 'text-emerald-600', label: '안전' };
+  if (score <= 60) return { bar: 'bg-amber-400', text: 'text-amber-600', label: '주의' };
+  return { bar: 'bg-red-500', text: 'text-red-600', label: '위험' };
+}
+
+function RiskScoreGauge({ score, overallStatus }) {
+  const { bar, text, label } = riskScoreColor(score);
+  return (
+    <div className="rounded-lg border border-coral/15 bg-coral/5 px-3 py-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-slate-500">위험도 점수</p>
+        <span className={`text-xs font-semibold ${statusTextClass(overallStatus)}`}>
+          {statusLabel(overallStatus)}
+        </span>
+      </div>
+      <div className="mt-2 flex items-end gap-2">
+        <span className={`text-3xl font-bold leading-none ${text}`}>{score}</span>
+        <span className="mb-0.5 text-sm text-slate-400">/ 100</span>
+        <span className={`mb-0.5 ml-auto text-sm font-semibold ${text}`}>{label}</span>
+      </div>
+      <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${bar}`}
+          style={{ width: `${score}%` }}
+        />
+      </div>
+    </div>
   );
 }
 

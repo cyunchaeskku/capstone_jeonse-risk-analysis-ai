@@ -142,11 +142,22 @@ def fetch_article_numbers(mst: str) -> list[str]:
     text = call_korean_law("get_law_text", "--mst", mst)
 
     numbers = []
+    seen = set()
+    duplicates = []
     for line in text.splitlines():
         line = line.strip()
         m = re.match(r"^(제\d+조(?:의\d+)?)\s", line)
         if m:
-            numbers.append(m.group(1))
+            number = m.group(1)
+            if number in seen:
+                duplicates.append(number)
+                continue
+            seen.add(number)
+            numbers.append(number)
+
+    if duplicates:
+        dupes = ", ".join(sorted(set(duplicates)))
+        print(f"  [경고] 목차 중복 조문 제거: {dupes}")
 
     return numbers
 
@@ -275,6 +286,18 @@ def upsert_articles(session, law_db_id: int, articles: list[dict]) -> int:
     if not articles:
         return 0
 
+    deduped: dict[str, dict] = {}
+    duplicates: list[str] = []
+    for article in articles:
+        key = article["jo_code"]
+        if key in deduped:
+            duplicates.append(key)
+        deduped[key] = article
+
+    if duplicates:
+        dupes = ", ".join(sorted(set(duplicates)))
+        print(f"  [경고] 중복 조문 제거 후 저장: {dupes}")
+
     rows = [
         {
             "law_id": law_db_id,
@@ -283,7 +306,7 @@ def upsert_articles(session, law_db_id: int, articles: list[dict]) -> int:
             "title": a["title"],
             "full_text": a["full_text"],
         }
-        for a in articles
+        for a in deduped.values()
     ]
 
     stmt = (

@@ -437,7 +437,11 @@ async def inspect_registry_document(file: UploadFile = File(...)) -> RegistryIns
 
     result = parse_registry_pdf(pdf_bytes)
     try:
-        inspection = inspect_registry_text(result.text)
+        max_claim_items = _registry_max_claim_items(result)
+        inspection = inspect_registry_text(
+            result.text,
+            max_claim_amounts=[item.model_dump() for item in max_claim_items],
+        )
     except RuntimeError as error:
         raise HTTPException(
             status_code=503,
@@ -460,7 +464,7 @@ async def inspect_registry_document(file: UploadFile = File(...)) -> RegistryIns
     return RegistryInspectResponse(
         filename=filename,
         max_claim_amount_krw=result.max_claim_amount_krw,
-        max_claim_amounts=_registry_max_claim_items(result),
+        max_claim_amounts=max_claim_items,
         inspection=inspection,
         status="needs_review" if inspection.get("needs_human_review") else "inspected",
         message="등기부등본 특이사항을 추출했습니다.",
@@ -863,6 +867,61 @@ def _run_deposit_to_market_check(deposit_krw: int, market_price_krw: int) -> Lis
     )
 
 
+_CHECK_WEIGHTS: dict[str, int] = {
+    "deposit_to_market_ratio": 15,
+    "residential_use": 15,
+    "duplicate_contract": 25,
+    "mortgage_ratio": 30,
+    "owner_mismatch": 15,
+}
+
+
+def _compute_risk_score(checks: list[ListingCheckResult]) -> int:
+    score = 0
+    for check in checks:
+        weight = _CHECK_WEIGHTS.get(check.code, 0)
+        if check.status == "fail":
+            score += weight
+        elif check.status == "warn":
+            score += weight // 2
+    return min(score, 100)
+
+
+def _run_duplicate_contract_check(
+    listing_name: str,
+    recent_transactions: list[dict],
+) -> ListingCheckResult:
+    jeonse_only = [
+        t for t in recent_transactions
+        if _to_int(t.get("monthlyRent")) == 0
+    ]
+    count = len(jeonse_only)
+    threshold = 5
+
+    if count == 0:
+        return ListingCheckResult(
+            code="duplicate_contract",
+            title="동일 건물 전세 거래 집중 여부",
+            status="unknown",
+            reason="최근 전세 거래 데이터가 없어 중복 계약 여부를 판단할 수 없습니다.",
+            evidence={"transaction_count": count},
+        )
+
+    status = "warn" if count >= threshold else "pass"
+    reason = (
+        f"최근 동일 건물에서 전세 거래가 {count}건 집중됐습니다. 중복 계약 가능성을 확인하세요."
+        if status == "warn"
+        else f"최근 동일 건물 전세 거래 {count}건으로 이상 징후가 없습니다."
+    )
+    return ListingCheckResult(
+        code="duplicate_contract",
+        title="동일 건물 전세 거래 집중 여부",
+        status=status,
+        reason=reason,
+        evidence={"transaction_count": count, "threshold": threshold},
+    )
+
+
 def _run_residential_use_check(selected_building: dict[str, Any]) -> ListingCheckResult:
     building_type = (selected_building.get("building_type") or "").strip()
     detail_use = (selected_building.get("detail_use") or "").strip()
@@ -1069,9 +1128,11 @@ async def analyze_listing_checks(payload: ListingCheckAnalyzeRequest) -> Listing
         raise HTTPException(status_code=400, detail="deposit_krw는 0보다 커야 합니다.")
 
     market_price_krw = await market_price_provider.get_market_price_krw(payload)
+    recent_transactions = (payload.extra_signals or {}).get("recent_transactions") or []
     checks = [
         _run_deposit_to_market_check(payload.deposit_krw, market_price_krw),
         _run_residential_use_check(payload.selected_building),
+        _run_duplicate_contract_check(payload.listing_name, recent_transactions),
     ]
     summary = _summarize_check_overall(checks)
     explanation = await _generate_listing_check_explanation(payload, checks, summary)
@@ -1079,6 +1140,7 @@ async def analyze_listing_checks(payload: ListingCheckAnalyzeRequest) -> Listing
         checks=checks,
         summary=summary,
         llm_explanation=explanation,
+        risk_score=_compute_risk_score(checks),
     )
 
 
