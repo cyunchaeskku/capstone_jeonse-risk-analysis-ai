@@ -7,3 +7,7 @@ node_modules/
 dist/
 __pycache__/
 *.pyc
+.DS_Store
+
+# 개인 등기부등본 PDF (실거주지 정보 포함)
+data/*.pdf
