@@ -4,10 +4,19 @@ FastAPI 기반의 최소 백엔드가 `backend/app` 아래에 구현되어 있�
 
 ## Run
 
+환경변수는 리포 루트의 `.env`에서 읽는다 (`backend/app/settings.py`, pydantic-settings).
+`.env`는 gitignore 대상이므로 각자 만들어야 한다.
+
 ```bash
-export OPENAI_API_KEY=your_api_key
-export OPENAI_MODEL=gpt-4.1-nano
-export VECTOR_DB_PATH=vectorDB/laws_faiss
+# .env (리포 루트)
+OPENAI_API_KEY=your_api_key
+DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:5432/jeonse_db"
+```
+
+`DATABASE_URL`은 **필수**다. 기본값이 없어서 미설정 시 기동 즉시 `ValidationError`로 실패한다 —
+자격증명을 소스코드에 두지 않기 위함이다. `OPENAI_MODEL`, `VECTOR_DB_PATH`는 기본값이 있어 생략 가능하다.
+
+```bash
 uvicorn backend.app.main:app --reload
 ```
 

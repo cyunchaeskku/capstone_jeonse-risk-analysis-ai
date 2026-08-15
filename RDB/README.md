@@ -6,7 +6,7 @@
 
 | 파일/디렉터리 | 설명 |
 |---------------|------|
-| `docker-compose.yml` | PostgreSQL 컨테이너 설정 |
+| `docker-compose.yml` | PostgreSQL 컨테이너 설정 (선택 사항, 아래 참고) |
 | `alembic.ini` | Alembic 설정 파일 |
 | `alembic/` | 마이그레이션 스크립트 |
 
@@ -114,36 +114,69 @@ erDiagram
 - `laws` 1 : N `law_relations` (`parent_law_id`)
 - `laws` 1 : N `law_relations` (`child_law_id`)
 
-## Docker 실행
+## 실행 방법
+
+네이티브와 도커 중 **하나만** 쓴다. 둘 다 켜면 5432 포트가 충돌한다.  
+어느 쪽이든 접속 URL은 `postgresql+psycopg://postgres:postgres@localhost:5432/jeonse_db`로 동일하다.
+
+### 방법 A: 네이티브 (macOS, Homebrew) — 현재 기본
+
+**로그인 시 자동 기동하지 않는다.** 백엔드나 DB를 쓰는 스크립트를 돌리기 전에 직접 켜야 한다.
 
 ```bash
-# 컨테이너 시작
+brew services run postgresql@16     # 기동 (자동 기동 등록 없이)
+brew services stop postgresql@16    # 중지
+brew services list                  # 상태 확인
+```
+
+`start`가 아니라 `run`을 쓴다 — `brew services start`는 LaunchAgent를 등록해서 로그인 시
+자동 기동이 다시 켜진다.
+
+`postgresql@16`은 keg-only라 PATH 등록이 필요하다 (Intel Mac은 `/usr/local/opt`):
+
+```bash
+echo 'export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"' >> ~/.zshrc
+```
+
+최초 1회 롤·DB 생성 (Homebrew 기본 슈퍼유저는 macOS 계정명이라 `postgres` 롤을 따로 만든다):
+
+```bash
+createuser -s postgres
+psql -d postgres -c "ALTER ROLE postgres WITH PASSWORD 'postgres';"
+createdb -O postgres jeonse_db
+```
+
+### 방법 B: 도커
+
+```bash
 docker compose -f RDB/docker-compose.yml up -d
-
-# 컨테이너 상태 확인
 docker compose -f RDB/docker-compose.yml ps
-
-# 컨테이너 중지
 docker compose -f RDB/docker-compose.yml down
 ```
 
 ## 마이그레이션
 
+리포 루트에서 실행한다. `PYTHONPATH=.`가 필요하다 — `alembic/env.py`가 `backend.app.db`를 임포트하는데
+`alembic.ini`에 `prepend_sys_path` 설정이 없다.
+
 ```bash
 # 마이그레이션 적용
-alembic -c RDB/alembic.ini upgrade head
+PYTHONPATH=. alembic -c RDB/alembic.ini upgrade head
 
 # 현재 상태 확인
-alembic -c RDB/alembic.ini current
+PYTHONPATH=. alembic -c RDB/alembic.ini current
 
 # 새 마이그레이션 생성 (모델 변경 후)
-alembic -c RDB/alembic.ini revision --autogenerate -m "설명"
+PYTHONPATH=. alembic -c RDB/alembic.ini revision --autogenerate -m "설명"
 ```
 
 ## DB 접속 및 조회
 
 ```bash
-# psql 접속
+# 네이티브
+psql -U postgres -d jeonse_db
+
+# 도커
 docker exec -it jeonse_postgres psql -U postgres -d jeonse_db
 
 # 테이블 목록
@@ -152,6 +185,13 @@ docker exec -it jeonse_postgres psql -U postgres -d jeonse_db
 # 데이터 확인 예시
 SELECT name, mst FROM laws;
 SELECT COUNT(*) FROM law_articles GROUP BY law_id;
+```
+
+## 백업 / 복원
+
+```bash
+pg_dump -U postgres -d jeonse_db -Fc > jeonse_db.dump
+pg_restore -U postgres -d jeonse_db --no-owner jeonse_db.dump
 ```
 
 ---
