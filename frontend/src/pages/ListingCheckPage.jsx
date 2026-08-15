@@ -20,6 +20,7 @@ function ListingCheckPage() {
   const [selectedBuilding, setSelectedBuilding] = useState(null);
   const [viewingDetails, setViewingDetails] = useState(null);
   const [rentItems, setRentItems] = useState([]);
+  const [devTab, setDevTab] = useState('raw');
 
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
@@ -136,6 +137,7 @@ function ListingCheckPage() {
         building_name: place.title,
         property_type: propertyType,
       });
+      if (import.meta.env.DEV) params.set('debug', 'true');
       const response = await fetch(`${API_BASE}/listing-checks/search?${params}`);
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
@@ -272,6 +274,46 @@ function ListingCheckPage() {
           <button onClick={() => { setSelectedPlace(null); setPlaceCandidates([]); }} className="ml-auto text-xs underline">다시 검색</button>
         </div>
       )}
+
+      {import.meta.env.DEV && searchResult?.debug ? (
+        <details className="rounded-xl border border-coral/15 bg-white p-4 shadow-sm">
+          <summary className="cursor-pointer text-sm font-semibold text-ink">개발자용 탭</summary>
+          <div className="mt-4">
+            <div className="flex gap-2" role="tablist">
+              <button
+                type="button"
+                onClick={() => setDevTab('raw')}
+                className={`rounded-lg px-3 py-2 text-xs font-semibold ${devTab === 'raw' ? 'bg-ink text-white' : 'bg-sand text-slate-600'}`}
+              >
+                API 원본 데이터
+              </button>
+              <button
+                type="button"
+                onClick={() => setDevTab('errors')}
+                className={`rounded-lg px-3 py-2 text-xs font-semibold ${devTab === 'errors' ? 'bg-ink text-white' : 'bg-sand text-slate-600'}`}
+              >
+                오류 로그
+              </button>
+            </div>
+            <pre className="mt-3 max-h-[32rem] overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100">
+              {JSON.stringify(
+                devTab === 'raw'
+                  ? {
+                      period: searchResult.debug.period,
+                      rent: (searchResult.debug.rent?.raw_transactions ?? []).slice(0, 30),
+                      trade: (searchResult.debug.trade?.raw_transactions ?? []).slice(0, 30),
+                    }
+                  : {
+                      rent: searchResult.debug.rent?.errors ?? [],
+                      trade: searchResult.debug.trade?.errors ?? [],
+                    },
+                null,
+                2,
+              )}
+            </pre>
+          </div>
+        </details>
+      ) : null}
 
       <section className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
         <div className="space-y-4">

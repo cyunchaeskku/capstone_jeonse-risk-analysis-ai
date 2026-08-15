@@ -199,13 +199,14 @@ function AnalysisNewPage() {
 
         <aside className="rounded-[2rem] border border-white/80 bg-white/85 p-6 shadow-soft">
           <p className="text-sm font-semibold tracking-[0.18em] text-coral uppercase">Quick Checklist</p>
-          <div className="mt-5 space-y-3">
-            {checklist.map((item) => (
-              <div key={item} className="rounded-2xl bg-sand p-4 text-sm leading-6 text-slate-700">
-                {item}
-              </div>
+          <ol className="mt-5 space-y-3">
+            {checklist.map((item, index) => (
+              <li key={item} className="flex gap-3 rounded-2xl bg-sand p-4 text-sm leading-6 text-slate-700">
+                <span className="font-semibold text-coral">{index + 1}.</span>
+                <span>{item}</span>
+              </li>
             ))}
-          </div>
+          </ol>
         </aside>
       </section>
 
