@@ -98,9 +98,9 @@ function HomePage() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-sm text-slate-500">종합 리스크</p>
-                    <p className="mt-2 text-3xl font-semibold text-slate-900">주의 필요</p>
+                    <p className="mt-2 text-3xl font-semibold text-red-600">주의 필요</p>
                   </div>
-                  <div className="rounded-full bg-coral/15 px-4 py-2 text-sm font-semibold text-ink">
+                  <div className="rounded-full bg-red-100 px-4 py-2 text-sm font-semibold text-red-700">
                     High Signal
                   </div>
                 </div>

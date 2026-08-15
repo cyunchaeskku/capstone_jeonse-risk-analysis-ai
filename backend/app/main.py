@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import json
+import logging
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -37,6 +38,8 @@ from .services import AnalysisService
 from .settings import settings
 
 
+logger = logging.getLogger("uvicorn.error")
+
 app = FastAPI(
     title="Jeonse Risk Analysis API",
     version="0.1.0",
@@ -55,6 +58,7 @@ service = AnalysisService()
 chatbot_service = ChatbotService()
 
 _CSV_PATH = Path(__file__).parent.parent.parent / "data" / "address_code.csv"
+_DEBUG_RAW_TRANSACTION_LIMIT = 30
 
 
 def _load_legal_code_map():
@@ -293,6 +297,17 @@ def _extract_bun_ji(address_str: str) -> tuple[str, str]:
     return "", ""
 
 
+def _extract_dong_and_jibun(address_str: str) -> tuple[str, str]:
+    words = address_str.strip().split()
+    dong = next((word for word in words if word.endswith(("동", "읍", "면"))), "")
+    match = re.search(r"(\d+(?:-\d+)?)$", address_str)
+    return dong, match.group(1) if match else ""
+
+
+def _is_matching_rh_address(target_dong: str, target_jibun: str, item_dong: str | None, item_jibun: str | None) -> bool:
+    return bool(target_dong and target_jibun) and (item_dong or "").strip() == target_dong and (item_jibun or "").strip() == target_jibun
+
+
 async def _fetch_building_register_page(
     client: httpx.AsyncClient,
     sigungu_cd: str,
@@ -325,7 +340,38 @@ async def _fetch_building_register_page(
     if response.status_code != 200:
         return 0, []
 
-    root = ET.fromstring(response.text)
+    content_type = response.headers.get("content-type", "").lower()
+    if "json" in content_type:
+        try:
+            payload = response.json()
+        except ValueError:
+            logger.warning("건축물대장 API JSON 응답을 읽지 못했습니다: body=%r", response.text[:200])
+            return 0, []
+
+        if payload.get("header", {}).get("resultCode") not in ["00", "000"]:
+            return 0, []
+
+        body = payload.get("body", {})
+        raw_items = body.get("items", {}).get("item", [])
+        if isinstance(raw_items, dict):
+            raw_items = [raw_items]
+        items = [
+            {key: str(value or "") for key, value in item.items()}
+            for item in raw_items
+            if isinstance(item, dict)
+        ]
+        return int(body.get("totalCount") or len(items)), items
+
+    try:
+        root = ET.fromstring(response.text)
+    except ET.ParseError:
+        logger.warning(
+            "건축물대장 API 응답이 XML이 아닙니다: status=%s, content_type=%s, body=%r",
+            response.status_code,
+            response.headers.get("content-type"),
+            response.text[:200],
+        )
+        return 0, []
     # resultCode가 '00'이면 성공
     res_code = root.findtext(".//resultCode")
     if res_code not in ["00", "000"]:
@@ -556,6 +602,7 @@ async def search_listing_for_checks(
     query: str = Query(..., description="지번 주소"),
     building_name: str | None = Query(None, description="선택된 건물명"),
     property_type: str = Query(default="apt", description="매물 종류: apt/offi/rh/sh"),
+    debug: bool = Query(default=False, description="개발용 원본 거래 진단 포함"),
 ):
     if not settings.naver_maps_client_id or not settings.naver_maps_client_secret:
         raise HTTPException(status_code=500, detail="Naver Maps API 키가 설정되지 않았습니다.")
@@ -618,13 +665,17 @@ async def search_listing_for_checks(
         t_svc, t_method, t_bld_f, t_area_f, t_price_f = _TRADE_TYPE_MAP[property_type]
 
         target_search_name = building_name.strip() if building_name else ""
-        
+        rh_dong, rh_jibun = _extract_dong_and_jibun(query) if property_type == "rh" else ("", "")
+        match_label = "동·지번 일치" if property_type == "rh" else "건물명 일치"
+        rent_diagnostics: dict[str, Any] = {"raw_transactions": [], "errors": []} if debug else {}
+        trade_diagnostics: dict[str, Any] = {"raw_transactions": [], "errors": []} if debug else {}
+
         rent_tasks = [
-            _fetch_month(client, r_svc, r_method, r_bld_f, r_area_f, sigungu_cd, ymd, "", target_search_name)
+            _fetch_month(client, r_svc, r_method, r_bld_f, r_area_f, sigungu_cd, ymd, "", target_search_name, diagnostics=rent_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun)
             for ymd in months
         ]
         trade_tasks = [
-            _fetch_month(client, t_svc, t_method, t_bld_f, t_area_f, sigungu_cd, ymd, "", target_search_name, t_price_f)
+            _fetch_month(client, t_svc, t_method, t_bld_f, t_area_f, sigungu_cd, ymd, "", target_search_name, t_price_f, trade_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun)
             for ymd in months
         ]
 
@@ -632,11 +683,36 @@ async def search_listing_for_checks(
         
         # 전세/월세 데이터 처리 (월세 0인 전세만 필터링)
         all_rent_items = [item for month_items in results[:len(months)] for item in month_items]
-        jeonse_items = [item for item in all_rent_items if _to_int(item.get("monthlyRent")) == 0]
-        
         # 매매 데이터 처리 (시세용)
         trade_items = [item for month_items in results[len(months):] for item in month_items]
-        
+
+        rent_deal_from = deal_from
+        if property_type == "rh":
+            for _ in range(9):
+                if all_rent_items:
+                    break
+                fallback_from, fallback_to = _previous_12m_period(rent_deal_from)
+                fallback_months = _iter_months(fallback_from, fallback_to)
+                fallback_results = await asyncio.gather(*(
+                    _fetch_month(client, r_svc, r_method, r_bld_f, r_area_f, sigungu_cd, ymd, "", target_search_name, diagnostics=rent_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun)
+                    for ymd in fallback_months
+                ))
+                all_rent_items = [item for month_items in fallback_results for item in month_items]
+                rent_deal_from = fallback_from
+
+        needs_trade_fallback = property_type == "rh" and not trade_items
+        if needs_trade_fallback:
+            fallback_from, fallback_to = _previous_12m_period(deal_from)
+            fallback_months = _iter_months(fallback_from, fallback_to)
+            fallback_results = await asyncio.gather(*(
+                _fetch_month(client, t_svc, t_method, t_bld_f, t_area_f, sigungu_cd, ymd, "", target_search_name, t_price_f, trade_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun)
+                for ymd in fallback_months
+            ))
+            trade_items = [item for month_items in fallback_results for item in month_items]
+
+        jeonse_items = [item for item in all_rent_items if _to_int(item.get("monthlyRent")) == 0]
+        latest_jeonse_price_krw, latest_jeonse = _pick_latest_market_price_krw(jeonse_items)
+
         # 시세 결정: 매매가 있으면 매매가 기준, 없으면 전세가 기준 (Mock 대비 실제 데이터 우선)
         market_price_krw = 0
         latest_trade = None
@@ -646,6 +722,47 @@ async def search_listing_for_checks(
         else:
             market_price_krw, latest_trade = _pick_latest_market_price_krw(jeonse_items)
             price_source = "latest-jeonse-transaction"
+
+        if latest_jeonse:
+            logger.info(
+                "전세 거래 검색 결과\n  건물명: %s\n  지번: %s\n  거래 수: %d건\n  최근 거래: %s\n  보증금: %s원",
+                target_search_name,
+                rh_jibun or "-",
+                len(jeonse_items),
+                _format_transaction_details(latest_jeonse),
+                f"{latest_jeonse_price_krw:,}",
+            )
+        else:
+            logger.info("전세 거래 검색 결과\n  건물명: %s\n  지번: %s\n  거래 수: 0건\n  최근 전세: 정보 없음", target_search_name, rh_jibun or "-")
+            logger.info(
+                "전세 거래 0건 진단\n  API 원본 거래: %d건\n  %s: %d건\n  월세 포함 거래: %d건\n  XML 파싱 실패: %d건\n  HTTP 오류: %d건",
+                rent_diagnostics.get("api_item_count", 0),
+                match_label,
+                rent_diagnostics.get("building_match_count", 0),
+                len(all_rent_items),
+                rent_diagnostics.get("non_xml_response_count", 0),
+                rent_diagnostics.get("http_error_count", 0),
+            )
+        if latest_trade:
+            logger.info(
+                "시세 검색 결과\n  건물명: %s\n  지번: %s\n  기준: %s\n  매매 거래 수: %d건\n  최근 거래: %s\n  시세: %s원",
+                target_search_name,
+                rh_jibun or "-",
+                price_source,
+                len(trade_items),
+                _format_transaction_details(latest_trade),
+                f"{market_price_krw:,}",
+            )
+        else:
+            logger.info("시세 검색 결과\n  건물명: %s\n  지번: %s\n  매매 거래 수: 0건\n  시세: 정보 없음", target_search_name, rh_jibun or "-")
+            logger.info(
+                "시세 0건 진단\n  API 원본 거래: %d건\n  %s: %d건\n  XML 파싱 실패: %d건\n  HTTP 오류: %d건",
+                trade_diagnostics.get("api_item_count", 0),
+                match_label,
+                trade_diagnostics.get("building_match_count", 0),
+                trade_diagnostics.get("non_xml_response_count", 0),
+                trade_diagnostics.get("http_error_count", 0),
+            )
 
     return {
         "query": query.strip(),
@@ -662,7 +779,7 @@ async def search_listing_for_checks(
             "candidates": building_candidates,
         },
         "rent": {
-            "deal_from": deal_from,
+            "deal_from": rent_deal_from,
             "deal_to": deal_to,
             "total": len(jeonse_items),
             "items": sorted(jeonse_items, key=_extract_ymd, reverse=True),
@@ -672,6 +789,13 @@ async def search_listing_for_checks(
             "source": price_source,
             "latest_trade": latest_trade,
         },
+        **({
+            "debug": {
+                "period": {"from": deal_from, "to": deal_to},
+                "rent": rent_diagnostics,
+                "trade": trade_diagnostics,
+            }
+        } if debug else {}),
     }
 
 
@@ -768,6 +892,20 @@ def _extract_ymd(item: dict[str, Any]) -> int:
         return 0
 
 
+def _format_transaction_details(item: dict[str, Any]) -> str:
+    year = str(item.get("dealYear") or "").strip()
+    month = str(item.get("dealMonth") or "").strip().zfill(2)
+    day = str(item.get("dealDay") or "").strip().zfill(2)
+    details = [f"{year}-{month}-{day}" if year and month and day else "날짜 정보 없음"]
+    if item.get("floor"):
+        details.append(f"{item['floor']}층")
+    if item.get("excluUseAr"):
+        details.append(f"{item['excluUseAr']}㎡")
+    if item.get("contractType"):
+        details.append(str(item["contractType"]))
+    return " · ".join(details)
+
+
 def _pick_latest_market_price_krw(items: list[dict[str, Any]]) -> tuple[int, dict[str, Any] | None]:
     if not items:
         return 0, None
@@ -782,6 +920,12 @@ def _recent_12m_period() -> tuple[str, str]:
     start_month = (today.month % 12) + 1
     start = f"{start_year}{str(start_month).zfill(2)}"
     return start, end
+
+
+def _previous_12m_period(start: str) -> tuple[str, str]:
+    year, month = int(start[:4]), int(start[4:])
+    end_year, end_month = (year, month - 1) if month > 1 else (year - 1, 12)
+    return f"{year - 1}{month:02d}", f"{end_year}{end_month:02d}"
 
 
 def _summarize_check_overall(checks: list[ListingCheckResult]) -> ListingCheckSummary:
@@ -1042,6 +1186,9 @@ async def _fetch_month(
     dong: str,
     building_name: str,
     price_field: str = "deposit",
+    diagnostics: dict[str, Any] | None = None,
+    rh_dong: str = "",
+    rh_jibun: str = "",
 ) -> list[dict]:
     url = (
         f"https://apis.data.go.kr/1613000/{svc_name}/{method_name}"
@@ -1050,26 +1197,73 @@ async def _fetch_month(
     )
     response = await client.get(url, timeout=10.0)
     if response.status_code != 200:
+        if diagnostics is not None:
+            diagnostics["http_error_count"] = diagnostics.get("http_error_count", 0) + 1
+            if "errors" in diagnostics:
+                diagnostics["errors"].append({
+                    "service": svc_name,
+                    "month": ymd,
+                    "kind": "http_error",
+                    "status_code": response.status_code,
+                    "content_type": response.headers.get("content-type"),
+                    "body": response.text[:500],
+                })
         return []
     try:
         root = ET.fromstring(response.text)
     except ET.ParseError:
+        if diagnostics is not None:
+            diagnostics["non_xml_response_count"] = diagnostics.get("non_xml_response_count", 0) + 1
+            if "errors" in diagnostics:
+                diagnostics["errors"].append({
+                    "service": svc_name,
+                    "month": ymd,
+                    "kind": "non_xml_response",
+                    "content_type": response.headers.get("content-type"),
+                    "body": response.text[:500],
+                })
         return []
     
     if root.findtext(".//resultCode") != "000":
+        if diagnostics is not None and "errors" in diagnostics:
+            diagnostics["errors"].append({
+                "service": svc_name,
+                "month": ymd,
+                "kind": "api_error",
+                "result_code": root.findtext(".//resultCode"),
+                "result_message": root.findtext(".//resultMsg"),
+            })
         return []
     items = root.findall(".//item")
+    if diagnostics is not None:
+        diagnostics["api_item_count"] = diagnostics.get("api_item_count", 0) + len(items)
+        if "raw_transactions" in diagnostics:
+            remaining = _DEBUG_RAW_TRANSACTION_LIMIT - len(diagnostics["raw_transactions"])
+            diagnostics["raw_transactions"].extend(
+                {
+                    "service": svc_name,
+                    "month": ymd,
+                    "item": {child.tag: child.text or "" for child in item},
+                }
+                for item in items[:max(remaining, 0)]
+            )
     result = []
     for item in items:
+        if rh_jibun and not _is_matching_rh_address(rh_dong, rh_jibun, item.findtext("umdNm"), item.findtext("jibun")):
+            continue
         if dong and dong not in (item.findtext("umdNm") or ""):
             continue
         current_building_name = item.findtext(building_field) or ""
-        if building_name and not _is_matching_building(building_name, current_building_name):
+        if not rh_jibun and building_name and not _is_matching_building(building_name, current_building_name):
             continue
+
+        if diagnostics is not None:
+            diagnostics["building_match_count"] = diagnostics.get("building_match_count", 0) + 1
 
         result.append({
             "buildingNm": current_building_name,
             "umdNm": item.findtext("umdNm"),
+            "jibun": item.findtext("jibun"),
             "excluUseAr": item.findtext(area_field),
             "deposit": item.findtext(price_field), # Trade API의 경우 dealAmount가 들어옴
             "monthlyRent": item.findtext("monthlyRent") or "0",
