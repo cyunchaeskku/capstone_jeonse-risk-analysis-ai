@@ -16,10 +16,7 @@ class Settings(BaseSettings):
         alias="VECTOR_DB_EMBEDDING_MODEL",
     )
     vector_db_top_k: int = Field(default=4, alias="VECTOR_DB_TOP_K")
-    database_url: str = Field(
-        default="postgresql+psycopg://postgres:postgres@localhost:5432/jeonse_db",
-        alias="DATABASE_URL",
-    )
+    database_url: str = Field(alias="DATABASE_URL")
     cors_origins: list[str] = Field(
         default_factory=lambda: [
             "http://localhost:5173",
