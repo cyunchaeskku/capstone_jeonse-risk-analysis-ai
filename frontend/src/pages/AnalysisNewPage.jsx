@@ -183,6 +183,12 @@ function AnalysisNewPage() {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
+  // R5·R7은 R1에서 이미 받아온 건축물대장·실거래가로 채워진다. 다시 묻지 않는다.
+  const selectedBuilding = lookup?.building?.selected ?? null;
+  const autoJeonseCount = (lookup?.rent?.items ?? []).filter(
+    (item) => toKrw(item?.monthlyRent) === 0,
+  ).length;
+
   const units = lookup?.official_price?.units ?? [];
   const dongList = useMemo(() => [...new Set(units.map((unit) => unit.dong))], [units]);
   const selectedUnit = units.find((unit) => `${unit.dong}/${unit.ho}` === unitKey) ?? null;
@@ -250,7 +256,14 @@ function AnalysisNewPage() {
         setUnitDong(found[0].dong);
         setUnitKey(`${found[0].dong}/${found[0].ho}`);
       }
-      update('listingName', payload.building?.selected?.building_name || place.title);
+      const building = payload.building?.selected ?? null;
+      update('listingName', building?.building_name || place.title);
+      if (building?.building_type) update('buildingType', building.building_type);
+      if (building?.detail_use) update('detailUse', building.detail_use);
+      const jeonseCount = (payload.rent?.items ?? []).filter(
+        (item) => toKrw(item?.monthlyRent) === 0,
+      ).length;
+      update('recentJeonseCount', String(jeonseCount));
     } catch (error) {
       setLookupError(error instanceof Error ? error.message : '건물 정보를 가져오지 못했습니다.');
     } finally {
@@ -653,27 +666,47 @@ function AnalysisNewPage() {
 
           {step.id === 'R5' && (
             <>
-              <Field label="건축물 주용도" hint="원래는 건축물대장 API에서 자동으로 채워지는 값입니다.">
-                <input
-                  className={inputClass}
-                  value={form.buildingType}
-                  onChange={(event) => update('buildingType', event.target.value)}
-                  placeholder="예) 공동주택"
-                />
-              </Field>
-              <Field label="기타용도 (상세)">
-                <input
-                  className={inputClass}
-                  value={form.detailUse}
-                  onChange={(event) => update('detailUse', event.target.value)}
-                  placeholder="예) 다세대주택 / 제2종근린생활시설(고시원)"
-                />
-              </Field>
+              {selectedBuilding ? (
+                <div className="rounded-2xl border border-coral/20 bg-cream/40 p-4">
+                  <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                    건축물대장 자동 조회
+                  </span>
+                  <p className="mt-2 text-sm text-slate-600">주용도</p>
+                  <p className="text-lg font-semibold text-slate-900">{form.buildingType || '-'}</p>
+                  <p className="mt-3 text-sm text-slate-600">기타용도</p>
+                  <p className="text-lg font-semibold text-slate-900">{form.detailUse || '-'}</p>
+                  <p className="mt-3 text-xs text-slate-500">
+                    R1에서 조회한 {selectedBuilding.building_name} 건축물대장에서 가져온 값입니다.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <Field label="건축물 주용도" hint="건축물대장이 조회되지 않아 직접 입력합니다.">
+                    <input
+                      className={inputClass}
+                      value={form.buildingType}
+                      onChange={(event) => update('buildingType', event.target.value)}
+                      placeholder="예) 공동주택"
+                    />
+                  </Field>
+                  <Field label="기타용도 (상세)">
+                    <input
+                      className={inputClass}
+                      value={form.detailUse}
+                      onChange={(event) => update('detailUse', event.target.value)}
+                      placeholder="예) 다세대주택 / 제2종근린생활시설(고시원)"
+                    />
+                  </Field>
+                </>
+              )}
             </>
           )}
 
           {step.id === 'R6' && (
-            <Field label="건축물대장에 위반건축물 표시가 있습니까?" hint="원래는 건축물대장 API의 위반건축물 필드로 자동 판정됩니다.">
+            <Field
+              label="건축물대장에 위반건축물 표시가 있습니까?"
+              hint="건축물대장 공공 API(표제부·총괄표제부·기본개요)에는 위반건축물 필드가 없습니다. 정부24나 세움터에서 건축물대장을 열람해 상단의 '위반건축물' 표시를 확인하세요."
+            >
               <select
                 className={inputClass}
                 value={form.hasIllegalBuilding}
@@ -686,17 +719,37 @@ function AnalysisNewPage() {
           )}
 
           {step.id === 'R7' && (
-            <Field
-              label="동일 건물 최근 12개월 순수 전세 거래 건수"
-              hint="원래는 실거래가 API로 자동 집계됩니다. 세대수 대비 정규화 전이라 참고 신호로만 쓰입니다."
-            >
-              <input
-                className={inputClass}
-                inputMode="numeric"
-                value={form.recentJeonseCount}
-                onChange={(event) => update('recentJeonseCount', event.target.value)}
-              />
-            </Field>
+            <>
+              {lookup ? (
+                <div className="rounded-2xl border border-coral/20 bg-cream/40 p-4">
+                  <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                    실거래가 자동 집계
+                  </span>
+                  <p className="mt-2 text-sm text-slate-600">최근 12개월 순수 전세 거래</p>
+                  <p className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">
+                    {autoJeonseCount}건
+                  </p>
+                  <p className="mt-2 text-xs text-slate-500">
+                    전월세 {lookup.rent?.total ?? 0}건 중 월세 0원인 순수 전세만 센 값입니다.
+                    {selectedBuilding?.households
+                      ? ` 이 건물은 ${selectedBuilding.households}세대입니다.`
+                      : ''}
+                  </p>
+                </div>
+              ) : (
+                <Field
+                  label="동일 건물 최근 12개월 순수 전세 거래 건수"
+                  hint="실거래가가 조회되지 않아 직접 입력합니다."
+                >
+                  <input
+                    className={inputClass}
+                    inputMode="numeric"
+                    value={form.recentJeonseCount}
+                    onChange={(event) => update('recentJeonseCount', event.target.value)}
+                  />
+                </Field>
+              )}
+            </>
           )}
 
           {step.id === 'R8' && (
