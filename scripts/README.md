@@ -8,6 +8,7 @@
 |------|------|
 | `ingest_laws.py` | 법령 데이터 수집 메인 스크립트 |
 | `make_vectorDB.py` | RDB 법령/조문 데이터를 FAISS 벡터DB로 변환 |
+| `test_nrg_trade.py` | 상업·업무용 부동산 매매 실거래가 API 단일 월 조회 |
 | `law_targets.yaml` | 수집 대상 법령 목록 (설정 파일) |
 
 ---
@@ -83,6 +84,15 @@ python scripts/ingest_laws.py --only "집합건물의 소유 및 관리에 관�
 ```
 
 법령 이름은 korean-law `search_law` 기준으로 정확하게 입력해야 한다. 약칭이 자동 변환되기도 하지만, 검색 결과 상위 항목이 원하는 법령인지 dry-run으로 먼저 확인하는 것을 권장한다.
+
+---
+
+## test_nrg_trade.py
+
+```bash
+# 구로구 최근 12개월에서 고척동 76-32 매매 거래 확인
+.venv/bin/python scripts/test_nrg_trade.py --lawd-cd 11530 --month 202608 --months 12 --dong 고척동 --jibun 76-32
+```
 
 ---
 
