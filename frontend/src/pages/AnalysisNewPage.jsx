@@ -76,7 +76,7 @@ const INITIAL_FORM = {
   contractOwnerName: '',
   buildingType: '공동주택',
   detailUse: '다세대주택',
-  hasIllegalBuilding: 'false',
+  illegalBuildingStatus: 'unclear',
   recentJeonseCount: '2',
   seniorDepositKrw: '0',
 };
@@ -93,6 +93,12 @@ const PRICE_SOURCE_LABEL = {
   'actual-trade-transaction': '매매 실거래가',
   'official-price-x140': '공시가격 × 140%',
   unavailable: '확인 불가',
+};
+
+const VIOLATION_META = {
+  present: { label: '위반건축물 표시 있음', tone: 'text-red-700' },
+  absent: { label: '위반건축물 표시 없음', tone: 'text-emerald-700' },
+  unclear: { label: '판독 불가 — 직접 확인 필요', tone: 'text-slate-700' },
 };
 
 const GRADE_META = {
@@ -170,6 +176,13 @@ function AnalysisNewPage() {
   const [lookupState, setLookupState] = useState('idle');
   const [lookupError, setLookupError] = useState('');
 
+  // R6 건축물대장 — 위반건축물 표시는 공공 API에 없어 대장 원본을 판독해야 한다.
+  const [ledger, setLedger] = useState(null);
+  const [ledgerFileName, setLedgerFileName] = useState('');
+  const [ledgerStatus, setLedgerStatus] = useState('idle');
+  const [ledgerError, setLedgerError] = useState('');
+  const ledgerInputRef = useRef(null);
+
   const step = STEPS[stepIndex];
   const isLastStep = stepIndex === STEPS.length - 1;
 
@@ -188,6 +201,15 @@ function AnalysisNewPage() {
   const autoJeonseCount = (lookup?.rent?.items ?? []).filter(
     (item) => toKrw(item?.monthlyRent) === 0,
   ).length;
+
+  // 다른 건물의 대장을 올렸는지 지번으로 대조한다. 비전 모델이 주소를 지어내는 경우도 있어
+  // 판독값을 그대로 믿지 않고 R1 조회 결과와 맞춰 본다.
+  const ledgerLotAddress = ledger?.inspection?.lot_address ?? '';
+  const ledgerAddressMismatch = Boolean(
+    ledgerLotAddress && lookup?.query && !ledgerLotAddress.replace(/\s/g, '').includes(
+      (lookup.query.match(/\d+(-\d+)?$/) ?? [''])[0],
+    ),
+  );
 
   const units = lookup?.official_price?.units ?? [];
   const dongList = useMemo(() => [...new Set(units.map((unit) => unit.dong))], [units]);
@@ -310,6 +332,44 @@ function AnalysisNewPage() {
     }
   }
 
+  async function handleLedgerUpload(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setLedgerFileName(file.name);
+    setLedgerError('');
+    setLedger(null);
+
+    if (file.type && file.type !== 'application/pdf') {
+      setLedgerStatus('idle');
+      setLedgerError('PDF 파일만 업로드할 수 있습니다.');
+      event.target.value = '';
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    setLedgerStatus('uploading');
+
+    try {
+      const response = await fetch(`${API_BASE}/building-register/inspect`, { method: 'POST', body: formData });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message =
+          typeof payload.detail === 'string' ? payload.detail : `업로드 실패 (${response.status})`;
+        throw new Error(message);
+      }
+      setLedger(payload);
+      setLedgerStatus('done');
+      update('illegalBuildingStatus', payload.inspection?.violation_status ?? 'unclear');
+    } catch (error) {
+      setLedgerStatus('idle');
+      setLedgerError(error instanceof Error ? error.message : '건축물대장 판독에 실패했습니다.');
+    } finally {
+      event.target.value = '';
+    }
+  }
+
   function canProceed() {
     if (step.id === 'R1') {
       // 시세는 0이어도 넘어간다. 확인 불가는 unknown으로 정직하게 판정되는 게 맞다.
@@ -336,7 +396,7 @@ function AnalysisNewPage() {
           critical_terms: criticalTerms,
           building_type: form.buildingType.trim(),
           detail_use: form.detailUse.trim(),
-          has_illegal_building: form.hasIllegalBuilding === 'true',
+          illegal_building_status: form.illegalBuildingStatus,
           recent_jeonse_count: Number(form.recentJeonseCount) || 0,
           senior_deposit_krw: toKrw(form.seniorDepositKrw),
         }),
@@ -371,6 +431,10 @@ function AnalysisNewPage() {
     setUnitDong('');
     setUnitKey('');
     setLookupError('');
+    setLedger(null);
+    setLedgerFileName('');
+    setLedgerStatus('idle');
+    setLedgerError('');
   }
 
   if (result) {
@@ -703,19 +767,110 @@ function AnalysisNewPage() {
           )}
 
           {step.id === 'R6' && (
-            <Field
-              label="건축물대장에 위반건축물 표시가 있습니까?"
-              hint="건축물대장 공공 API(표제부·총괄표제부·기본개요)에는 위반건축물 필드가 없습니다. 정부24나 세움터에서 건축물대장을 열람해 상단의 '위반건축물' 표시를 확인하세요."
-            >
-              <select
-                className={inputClass}
-                value={form.hasIllegalBuilding}
-                onChange={(event) => update('hasIllegalBuilding', event.target.value)}
+            <>
+              <input
+                ref={ledgerInputRef}
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                onChange={handleLedgerUpload}
+              />
+              <div className="rounded-2xl border border-dashed border-coral/40 bg-white p-6 text-center">
+                <p className="text-sm leading-6 text-slate-600">
+                  위반건축물 표시는 건축물대장 공공 API에 없어 대장 원본을 봐야 합니다.
+                  <br />
+                  정부24에서 발급한 건축물대장 PDF를 올리면 AI가 판독합니다.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => ledgerInputRef.current?.click()}
+                  disabled={ledgerStatus === 'uploading'}
+                  className="mt-4 rounded-2xl bg-slate-900 px-6 py-3 text-sm font-medium text-white disabled:opacity-40"
+                >
+                  {ledgerStatus === 'uploading' ? '판독 중…' : '건축물대장 PDF 업로드'}
+                </button>
+                {ledgerFileName && (
+                  <p className="mt-3 text-xs text-slate-500">{ledgerFileName}</p>
+                )}
+              </div>
+
+              {ledgerError && (
+                <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{ledgerError}</p>
+              )}
+
+              {ledger?.inspection && (
+                <div className="rounded-2xl border border-coral/20 bg-cream/40 p-4">
+                  <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                    AI 판독 결과
+                  </span>
+                  <p
+                    className={`mt-2 text-xl font-semibold ${
+                      VIOLATION_META[ledger.inspection.violation_status].tone
+                    }`}
+                  >
+                    {VIOLATION_META[ledger.inspection.violation_status].label}
+                  </p>
+                  {ledger.inspection.violation_note && (
+                    <p className="mt-2 text-sm text-slate-700">{ledger.inspection.violation_note}</p>
+                  )}
+                  <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                    <dt className="text-slate-500">명칭</dt>
+                    <dd className="text-slate-900">{ledger.inspection.building_name ?? '-'}</dd>
+                    <dt className="text-slate-500">대지위치</dt>
+                    <dd className="text-slate-900">{ledger.inspection.lot_address ?? '-'}</dd>
+                    <dt className="text-slate-500">주용도</dt>
+                    <dd className="text-slate-900">{ledger.inspection.main_use ?? '-'}</dd>
+                    <dt className="text-slate-500">세대수</dt>
+                    <dd className="text-slate-900">{ledger.inspection.households ?? '-'}</dd>
+                  </dl>
+                  {ledgerAddressMismatch && (
+                    <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                      업로드한 대장의 지번이 R1에서 조회한 건물과 다릅니다. 다른 건물의 대장은 아닌지
+                      확인하세요.
+                    </p>
+                  )}
+                  {(ledger.inspection.floors?.length ?? 0) > 0 && (
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="text-slate-500">
+                          <tr>
+                            <th className="py-1 pr-3 font-medium">층</th>
+                            <th className="py-1 pr-3 font-medium">용도</th>
+                            <th className="py-1 font-medium">면적</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-slate-800">
+                          {ledger.inspection.floors.map((floor, index) => (
+                            <tr key={`${floor.floor}-${index}`} className="border-t border-coral/10">
+                              <td className="py-1 pr-3 whitespace-nowrap">{floor.floor}</td>
+                              <td className="py-1 pr-3">{floor.use}</td>
+                              <td className="py-1 whitespace-nowrap">
+                                {floor.area_m2 ? `${floor.area_m2}㎡` : '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <Field
+                label="판독 결과 확인"
+                hint="AI 판독이 틀렸다고 판단되면 직접 고칠 수 있습니다. 대장을 확인하지 않았다면 '확인 못 함'으로 두세요. 통과 처리되지 않고 판단 불가로 남습니다."
               >
-                <option value="false">없음</option>
-                <option value="true">있음</option>
-              </select>
-            </Field>
+                <select
+                  className={inputClass}
+                  value={form.illegalBuildingStatus}
+                  onChange={(event) => update('illegalBuildingStatus', event.target.value)}
+                >
+                  <option value="unclear">확인 못 함 (판단 불가)</option>
+                  <option value="absent">위반건축물 표시 없음</option>
+                  <option value="present">위반건축물 표시 있음</option>
+                </select>
+              </Field>
+            </>
           )}
 
           {step.id === 'R7' && (

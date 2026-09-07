@@ -16,6 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from .chatbot import ChatbotService
+from .building_register_inspector import inspect_building_register_pdf
 from .registry_inspector import inspect_registry_text
 from .registry_parser import parse_registry_pdf
 from .schemas import (
@@ -469,6 +470,25 @@ async def parse_registry_document(file: UploadFile = File(...)) -> RegistryParse
         status="parsed",
         message="채권최고액을 추출했습니다.",
     )
+
+
+@app.post("/building-register/inspect")
+async def inspect_building_register(file: UploadFile = File(...)) -> dict[str, Any]:
+    """건축물대장 PDF를 비전 모델로 판독한다. 위반건축물 표시(R6) 확보가 목적이다."""
+    filename = file.filename or "building_register.pdf"
+    if (file.content_type and file.content_type != "application/pdf") or not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="PDF 파일만 업로드할 수 있습니다.")
+
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="빈 PDF 파일입니다.")
+
+    try:
+        inspection = inspect_building_register_pdf(pdf_bytes)
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    return {"file_name": filename, "inspection": inspection}
 
 
 @app.post("/registry/inspect", response_model=RegistryInspectResponse)
@@ -1751,23 +1771,35 @@ def _run_rights_encumbrance_check(
     )
 
 
-def _run_illegal_building_check(has_illegal_building: bool) -> ListingCheckResult:
-    """R6. 위반건축물 표시. 보증보험 가입 거절 사유."""
+def _run_illegal_building_check(status: str) -> ListingCheckResult:
+    """R6. 위반건축물 표시. 보증보험 가입 거절 사유.
+
+    건축물대장 공공 API에는 위반건축물 필드가 없어 대장 원본을 봐야만 알 수 있다.
+    확인하지 못한 상태를 pass로 두면 미탐이 통과로 위장되므로 unknown으로 남긴다.
+    """
     title = "위반건축물 여부"
-    if has_illegal_building:
+    if status == "present":
         return ListingCheckResult(
             code="illegal_building",
             title=title,
             status="fail",
             reason="건축물대장에 위반건축물로 표시되어 있습니다. 전세보증보험 가입이 거절되고 이행강제금 대상이 될 수 있습니다.",
-            evidence={"has_illegal_building": True},
+            evidence={"illegal_building_status": status},
+        )
+    if status == "absent":
+        return ListingCheckResult(
+            code="illegal_building",
+            title=title,
+            status="pass",
+            reason="건축물대장에 위반건축물 표시가 없습니다.",
+            evidence={"illegal_building_status": status},
         )
     return ListingCheckResult(
         code="illegal_building",
         title=title,
-        status="pass",
-        reason="건축물대장에 위반건축물 표시가 없습니다.",
-        evidence={"has_illegal_building": False},
+        status="unknown",
+        reason="건축물대장을 확인하지 못해 위반건축물 여부를 판정할 수 없습니다. 정부24에서 건축물대장을 발급해 업로드하세요.",
+        evidence={"illegal_building_status": status},
     )
 
 
@@ -1933,7 +1965,7 @@ async def assess_risk(payload: RiskAssessRequest) -> RiskAssessResponse:
         _run_residential_use_check(
             {"building_type": payload.building_type, "detail_use": payload.detail_use}
         ),
-        _run_illegal_building_check(payload.has_illegal_building),
+        _run_illegal_building_check(payload.illegal_building_status),
         _run_duplicate_contract_count_check(payload.recent_jeonse_count),
         _run_senior_deposit_check(
             payload.senior_deposit_krw,

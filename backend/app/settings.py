@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     # 빠뜨리면 키가 맞아도 INCORRECT_KEY로 거부된다.
     vworld_api_domain: str = Field(default="http://localhost:5173", alias="VWORLD_API_DOMAIN")
     openai_model: str = Field(default="gpt-4.1-nano", alias="OPENAI_MODEL")
+    # 건축물대장은 이미지 스캔본이라 비전 모델로 읽는다. nano는 표 칸 대응을 자주 틀리고
+    # gpt-4.1은 오히려 없는 건물명·지번을 지어내서, 실측 결과 mini가 가장 정확했다.
+    openai_vision_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_VISION_MODEL")
     vector_db_path: str = Field(default="vectorDB/laws_faiss", alias="VECTOR_DB_PATH")
     vector_db_embedding_model: str = Field(
         default="text-embedding-3-small",

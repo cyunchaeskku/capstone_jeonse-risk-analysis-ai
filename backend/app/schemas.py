@@ -147,3 +147,40 @@ class ListingCheckAnalyzeResponse(BaseModel):
     summary: ListingCheckSummary
     llm_explanation: str
     risk_score: int
+
+
+RiskGrade = Literal["safe", "caution", "risk", "high_risk"]
+
+
+class RiskAssessRequest(BaseModel):
+    """R1~R8 마법사가 수집한 입력. 모든 필드는 필수이며, 미확보는 빈 값으로 보내 `unknown`으로 판정한다."""
+
+    listing_name: str = Field(..., min_length=1, description="매물명 또는 주소")
+    deposit_krw: int = Field(..., ge=0, description="내 보증금 (R1·R2-b·R8)")
+    market_price_krw: int = Field(..., ge=0, description="주택 시세. 0이면 미확보 → R1·R2·R8 unknown")
+    registry_type: Literal["aggregate_building", "general_building", "unknown"] = Field(
+        ..., description="등기 유형. R2는 집합건물에서만, R8은 일반건물에서만 판정한다"
+    )
+    mortgage_total_krw: int = Field(..., ge=0, description="말소되지 않은 채권최고액 합계 (R2)")
+    registry_owner_name: str = Field(..., description="등기부 갑구 현재 소유자명. 빈 문자열이면 미확보 (R3)")
+    contract_owner_name: str = Field(..., description="계약서상 임대인명. 빈 문자열이면 미확보 (R3)")
+    critical_terms: list[dict[str, Any]] = Field(
+        default_factory=list, description="등기부에서 추출한 압류·가압류·가처분·가등기·경매·신탁 항목 (R4)"
+    )
+    building_type: str = Field(..., description="건축물 주용도 (R5)")
+    detail_use: str = Field(..., description="건축물 기타용도 (R5)")
+    illegal_building_status: Literal["present", "absent", "unclear"] = Field(
+        ...,
+        description="건축물대장 위반건축물 표시 (R6). 확인하지 못했으면 unclear",
+    )
+    recent_jeonse_count: int = Field(..., ge=0, description="동일 건물 최근 12개월 순수 전세 거래 건수 (R7)")
+    senior_deposit_krw: int = Field(..., ge=0, description="선순위 보증금 합계 (R8)")
+
+
+class RiskAssessResponse(BaseModel):
+    checks: list[ListingCheckResult]
+    summary: ListingCheckSummary
+    risk_score: int
+    risk_grade: RiskGrade
+    override_reasons: list[str] = Field(default_factory=list)
+    llm_explanation: str
