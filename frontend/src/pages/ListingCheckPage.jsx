@@ -300,8 +300,8 @@ function ListingCheckPage() {
                 devTab === 'raw'
                   ? {
                       period: searchResult.debug.period,
-                      rent: (searchResult.debug.rent?.raw_transactions ?? []).slice(0, 30),
-                      trade: (searchResult.debug.trade?.raw_transactions ?? []).slice(0, 30),
+                      rent: searchResult.debug.rent?.raw_transactions ?? [],
+                      trade: searchResult.debug.trade?.raw_transactions ?? [],
                     }
                   : {
                       rent: searchResult.debug.rent?.errors ?? [],
@@ -372,7 +372,7 @@ function ListingCheckPage() {
 
           <article className="rounded-xl border border-coral/15 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm font-semibold text-ink">가장 최근 전세 거래 정보</p>
+              <p className="text-sm font-semibold text-ink">가장 최근 전월세 거래 정보</p>
               <span className="text-[10px] text-slate-400 font-normal italic">자동 반영</span>
             </div>
             {rentItems.length > 0 ? (
@@ -383,13 +383,14 @@ function ListingCheckPage() {
                 </div>
                 <div className="mt-2 flex gap-4 text-xs">
                   <p><span className="text-slate-500">보증금:</span> <span className="font-semibold text-coral">{rentItems[0].deposit}</span> 만원</p>
+                  <p><span className="text-slate-500">월세:</span> <span className="font-semibold text-coral">{rentItems[0].monthlyRent}</span> 만원</p>
                   <p><span className="text-slate-500">전용면적:</span> {rentItems[0].excluUseAr}㎡</p>
                   <p><span className="text-slate-500">층수:</span> {rentItems[0].floor}층</p>
                 </div>
               </div>
             ) : (
               <p className="rounded-lg border border-dashed border-coral/20 bg-sand px-3 py-3 text-sm text-slate-500">
-                조회된 전세 거래 내역이 없습니다.
+                조회된 전월세 거래 내역이 없습니다.
               </p>
             )}
           </article>
@@ -397,12 +398,12 @@ function ListingCheckPage() {
 
         <aside className="h-fit rounded-xl border border-coral/15 bg-white p-4 shadow-sm lg:sticky lg:top-24">
           <p className="text-sm font-semibold text-ink">점검 결과</p>
-          <p className="mt-1 text-xs text-slate-500">건물 정보와 최근 전세가를 분석합니다.</p>
+          <p className="mt-1 text-xs text-slate-500">건물 정보와 최근 전월세 보증금을 분석합니다.</p>
 
           <div className="mt-4 space-y-2 rounded-lg bg-sand p-3 text-xs text-slate-700">
             <SummaryRow label="건물명" value={activeBuilding?.building_name || '-'} />
             <SummaryRow label="시세(매매)" value={marketPriceKrw > 0 ? `${formatMoney(marketPriceKrw)}원` : '정보없음'} />
-            <SummaryRow label="최근 전세" value={selectedRentItem ? `${formatMoney(selectedDepositKrw)}원` : '-'} />
+            <SummaryRow label="최근 전월세 보증금" value={selectedRentItem ? `${formatMoney(selectedDepositKrw)}원` : '-'} />
             <SummaryRow label="전세가율" value={ratioFromSelection !== null ? `${(ratioFromSelection * 100).toFixed(1)}%` : '-'} />
           </div>
 

@@ -58,9 +58,6 @@ service = AnalysisService()
 chatbot_service = ChatbotService()
 
 _CSV_PATH = Path(__file__).parent.parent.parent / "data" / "address_code.csv"
-_DEBUG_RAW_TRANSACTION_LIMIT = 30
-
-
 def _load_legal_code_map():
     mapping = {}
     if not _CSV_PATH.exists():
@@ -665,23 +662,24 @@ async def search_listing_for_checks(
         t_svc, t_method, t_bld_f, t_area_f, t_price_f = _TRADE_TYPE_MAP[property_type]
 
         target_search_name = building_name.strip() if building_name else ""
-        rh_dong, rh_jibun = _extract_dong_and_jibun(query) if property_type == "rh" else ("", "")
+        target_dong, target_jibun = _extract_dong_and_jibun(query)
+        rh_dong, rh_jibun = (target_dong, target_jibun) if property_type == "rh" else ("", "")
         match_label = "동·지번 일치" if property_type == "rh" else "건물명 일치"
         rent_diagnostics: dict[str, Any] = {"raw_transactions": [], "errors": []} if debug else {}
         trade_diagnostics: dict[str, Any] = {"raw_transactions": [], "errors": []} if debug else {}
 
         rent_tasks = [
-            _fetch_month(client, r_svc, r_method, r_bld_f, r_area_f, sigungu_cd, ymd, "", target_search_name, diagnostics=rent_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun)
+            _fetch_month(client, r_svc, r_method, r_bld_f, r_area_f, sigungu_cd, ymd, "", target_search_name, diagnostics=rent_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun, debug_dong=target_dong)
             for ymd in months
         ]
         trade_tasks = [
-            _fetch_month(client, t_svc, t_method, t_bld_f, t_area_f, sigungu_cd, ymd, "", target_search_name, t_price_f, trade_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun)
+            _fetch_month(client, t_svc, t_method, t_bld_f, t_area_f, sigungu_cd, ymd, "", target_search_name, t_price_f, trade_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun, debug_dong=target_dong)
             for ymd in months
         ]
 
         results = await asyncio.gather(*(rent_tasks + trade_tasks))
         
-        # 전세/월세 데이터 처리 (월세 0인 전세만 필터링)
+        # 전세/월세 데이터 처리
         all_rent_items = [item for month_items in results[:len(months)] for item in month_items]
         # 매매 데이터 처리 (시세용)
         trade_items = [item for month_items in results[len(months):] for item in month_items]
@@ -694,7 +692,7 @@ async def search_listing_for_checks(
                 fallback_from, fallback_to = _previous_12m_period(rent_deal_from)
                 fallback_months = _iter_months(fallback_from, fallback_to)
                 fallback_results = await asyncio.gather(*(
-                    _fetch_month(client, r_svc, r_method, r_bld_f, r_area_f, sigungu_cd, ymd, "", target_search_name, diagnostics=rent_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun)
+                    _fetch_month(client, r_svc, r_method, r_bld_f, r_area_f, sigungu_cd, ymd, "", target_search_name, diagnostics=rent_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun, debug_dong=target_dong)
                     for ymd in fallback_months
                 ))
                 all_rent_items = [item for month_items in fallback_results for item in month_items]
@@ -705,13 +703,13 @@ async def search_listing_for_checks(
             fallback_from, fallback_to = _previous_12m_period(deal_from)
             fallback_months = _iter_months(fallback_from, fallback_to)
             fallback_results = await asyncio.gather(*(
-                _fetch_month(client, t_svc, t_method, t_bld_f, t_area_f, sigungu_cd, ymd, "", target_search_name, t_price_f, trade_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun)
+                _fetch_month(client, t_svc, t_method, t_bld_f, t_area_f, sigungu_cd, ymd, "", target_search_name, t_price_f, trade_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun, debug_dong=target_dong)
                 for ymd in fallback_months
             ))
             trade_items = [item for month_items in fallback_results for item in month_items]
 
         jeonse_items = [item for item in all_rent_items if _to_int(item.get("monthlyRent")) == 0]
-        latest_jeonse_price_krw, latest_jeonse = _pick_latest_market_price_krw(jeonse_items)
+        latest_rent_price_krw, latest_rent = _pick_latest_market_price_krw(all_rent_items)
 
         # 시세 결정: 매매가 있으면 매매가 기준, 없으면 전세가 기준 (Mock 대비 실제 데이터 우선)
         market_price_krw = 0
@@ -723,25 +721,25 @@ async def search_listing_for_checks(
             market_price_krw, latest_trade = _pick_latest_market_price_krw(jeonse_items)
             price_source = "latest-jeonse-transaction"
 
-        if latest_jeonse:
+        if latest_rent:
             logger.info(
-                "전세 거래 검색 결과\n  건물명: %s\n  지번: %s\n  거래 수: %d건\n  최근 거래: %s\n  보증금: %s원",
+                "전월세 거래 검색 결과\n  건물명: %s\n  지번: %s\n  거래 수: %d건\n  최근 거래: %s\n  보증금: %s원",
                 target_search_name,
                 rh_jibun or "-",
-                len(jeonse_items),
-                _format_transaction_details(latest_jeonse),
-                f"{latest_jeonse_price_krw:,}",
+                len(all_rent_items),
+                _format_transaction_details(latest_rent),
+                f"{latest_rent_price_krw:,}",
             )
         else:
-            logger.info("전세 거래 검색 결과\n  건물명: %s\n  지번: %s\n  거래 수: 0건\n  최근 전세: 정보 없음", target_search_name, rh_jibun or "-")
+            logger.info("전월세 거래 검색 결과\n  건물명: %s\n  지번: %s\n  거래 수: 0건\n  최근 전월세: 정보 없음", target_search_name, rh_jibun or "-")
             logger.info(
-                "전세 거래 0건 진단\n  API 원본 거래: %d건\n  %s: %d건\n  월세 포함 거래: %d건\n  XML 파싱 실패: %d건\n  HTTP 오류: %d건",
+                "전월세 거래 0건 진단\n  API 원본 거래: %d건\n  %s: %d건\n  XML 파싱 실패: %d건\n  HTTP 오류: %d건\n  요청 오류: %d건",
                 rent_diagnostics.get("api_item_count", 0),
                 match_label,
                 rent_diagnostics.get("building_match_count", 0),
-                len(all_rent_items),
                 rent_diagnostics.get("non_xml_response_count", 0),
                 rent_diagnostics.get("http_error_count", 0),
+                rent_diagnostics.get("request_error_count", 0),
             )
         if latest_trade:
             logger.info(
@@ -756,12 +754,13 @@ async def search_listing_for_checks(
         else:
             logger.info("시세 검색 결과\n  건물명: %s\n  지번: %s\n  매매 거래 수: 0건\n  시세: 정보 없음", target_search_name, rh_jibun or "-")
             logger.info(
-                "시세 0건 진단\n  API 원본 거래: %d건\n  %s: %d건\n  XML 파싱 실패: %d건\n  HTTP 오류: %d건",
+                "시세 0건 진단\n  API 원본 거래: %d건\n  %s: %d건\n  XML 파싱 실패: %d건\n  HTTP 오류: %d건\n  요청 오류: %d건",
                 trade_diagnostics.get("api_item_count", 0),
                 match_label,
                 trade_diagnostics.get("building_match_count", 0),
                 trade_diagnostics.get("non_xml_response_count", 0),
                 trade_diagnostics.get("http_error_count", 0),
+                trade_diagnostics.get("request_error_count", 0),
             )
 
     return {
@@ -781,8 +780,8 @@ async def search_listing_for_checks(
         "rent": {
             "deal_from": rent_deal_from,
             "deal_to": deal_to,
-            "total": len(jeonse_items),
-            "items": sorted(jeonse_items, key=_extract_ymd, reverse=True),
+            "total": len(all_rent_items),
+            "items": sorted(all_rent_items, key=_extract_ymd, reverse=True),
         },
         "market_price": {
             "price_krw": market_price_krw,
@@ -1189,13 +1188,27 @@ async def _fetch_month(
     diagnostics: dict[str, Any] | None = None,
     rh_dong: str = "",
     rh_jibun: str = "",
+    debug_dong: str = "",
 ) -> list[dict]:
     url = (
         f"https://apis.data.go.kr/1613000/{svc_name}/{method_name}"
         f"?serviceKey={settings.data_go_kr_api_key}"
         f"&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000&pageNo=1"
     )
-    response = await client.get(url, timeout=10.0)
+    try:
+        response = await client.get(url, timeout=10.0)
+    except httpx.RequestError as exc:
+        if diagnostics is not None:
+            diagnostics["request_error_count"] = diagnostics.get("request_error_count", 0) + 1
+            if "errors" in diagnostics:
+                diagnostics["errors"].append({
+                    "service": svc_name,
+                    "month": ymd,
+                    "kind": "request_error",
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                })
+        return []
     if response.status_code != 200:
         if diagnostics is not None:
             diagnostics["http_error_count"] = diagnostics.get("http_error_count", 0) + 1
@@ -1237,21 +1250,17 @@ async def _fetch_month(
     items = root.findall(".//item")
     if diagnostics is not None:
         diagnostics["api_item_count"] = diagnostics.get("api_item_count", 0) + len(items)
-        if "raw_transactions" in diagnostics:
-            remaining = _DEBUG_RAW_TRANSACTION_LIMIT - len(diagnostics["raw_transactions"])
-            diagnostics["raw_transactions"].extend(
-                {
-                    "service": svc_name,
-                    "month": ymd,
-                    "item": {child.tag: child.text or "" for child in item},
-                }
-                for item in items[:max(remaining, 0)]
-            )
     result = []
     for item in items:
-        if rh_jibun and not _is_matching_rh_address(rh_dong, rh_jibun, item.findtext("umdNm"), item.findtext("jibun")):
-            continue
         if dong and dong not in (item.findtext("umdNm") or ""):
+            continue
+        if diagnostics is not None and "raw_transactions" in diagnostics and (item.findtext("umdNm") or "").strip() == debug_dong:
+            diagnostics["raw_transactions"].append({
+                "service": svc_name,
+                "month": ymd,
+                "item": {child.tag: child.text or "" for child in item},
+            })
+        if rh_jibun and not _is_matching_rh_address(rh_dong, rh_jibun, item.findtext("umdNm"), item.findtext("jibun")):
             continue
         current_building_name = item.findtext(building_field) or ""
         if not rh_jibun and building_name and not _is_matching_building(building_name, current_building_name):
