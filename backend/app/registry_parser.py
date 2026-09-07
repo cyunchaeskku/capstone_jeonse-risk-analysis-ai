@@ -7,6 +7,13 @@ _OBJ_RE = re.compile(rb"(\d+)\s+0\s+obj(.*?)endobj", re.DOTALL)
 _HEX_TEXT_RE = re.compile(r"<([0-9A-Fa-f]+)>\s*Tj")
 _LITERAL_TEXT_RE = re.compile(r"\((.*?)\)\s*Tj", re.DOTALL)
 _MAX_CLAIM_RE = re.compile(r"채권최고액\s*(?:금\s*)?([0-9,]+)\s*(?:원)?")
+# 근저당 항목 끝에 붙는 "공동담보목록  제2013-432호" 참조.
+_COLLATERAL_REF_RE = re.compile(r"공동담보목록\s*제\s*([0-9]{4}-[0-9]+)\s*호")
+# 목록 본문은 목록번호만 적힌 줄로 시작한다. 위 참조 문구와 구분하려고 줄 전체를 맞춘다.
+_COLLATERAL_BODY_RE = re.compile(r"(?m)^\s*([0-9]{4}-[0-9]+)\s*$")
+# 목록 본문의 물건 한 건. 매 페이지 머리글의 "[집합건물] ... 제201호"와 겹치지 않도록
+# 대괄호까지 포함해 맞춘다. 집합건물 대지도 [토지]로 한 건 잡힌다.
+_COLLATERAL_PROPERTY_RE = re.compile(r"\[건물\]|\[토지\]")
 
 
 @dataclass
@@ -14,6 +21,9 @@ class RegistryMaxClaimMatch:
     amount_krw: int
     raw_text: str
     page: int | None = None
+    collateral_list_no: str | None = None
+    # 공동담보로 묶인 물건 수. 단독담보면 1.
+    shared_property_count: int = 1
 
 
 @dataclass
@@ -26,6 +36,7 @@ class RegistryParseResult:
 def parse_registry_pdf(pdf_bytes: bytes) -> RegistryParseResult:
     text = _extract_text_with_pymupdf(pdf_bytes) or _extract_text_with_pdf_cmap(pdf_bytes)
     matches = _extract_max_claim_amounts(text)
+    _attach_shared_collateral(matches, text)
     return RegistryParseResult(
         max_claim_amount_krw=matches[-1].amount_krw if matches else None,
         max_claim_amounts=matches,
@@ -189,3 +200,42 @@ def _extract_max_claim_amounts(text: str) -> list[RegistryMaxClaimMatch]:
                 )
             )
     return matches
+
+
+def _count_collateral_properties(text: str) -> dict[str, int]:
+    """공동담보목록별 물건 수를 센다."""
+    bodies = [(match.group(1), match.start()) for match in _COLLATERAL_BODY_RE.finditer(text)]
+    counts: dict[str, int] = {}
+    for index, (list_no, start) in enumerate(bodies):
+        end = bodies[index + 1][1] if index + 1 < len(bodies) else len(text)
+        counts[list_no] = len(_COLLATERAL_PROPERTY_RE.findall(text[start:end]))
+    return counts
+
+
+def _attach_shared_collateral(matches: list[RegistryMaxClaimMatch], text: str) -> None:
+    """각 채권최고액에 공동담보목록 번호와 물건 수를 붙인다.
+
+    목록 참조는 근저당 항목 끝에 오므로, 채권최고액 위치 뒤에 처음 나오는 참조를
+    그 근저당의 것으로 본다. 참조가 없으면 단독담보(1건)다.
+    """
+    if not matches:
+        return
+
+    refs = [(match.group(1), match.start()) for match in _COLLATERAL_REF_RE.finditer(text)]
+    if not refs:
+        return
+    counts = _count_collateral_properties(text)
+
+    used: set[int] = set()
+    for item in matches:
+        position = text.find(item.raw_text)
+        if position < 0:
+            continue
+        for index, (list_no, ref_start) in enumerate(refs):
+            if index in used or ref_start < position:
+                continue
+            used.add(index)
+            item.collateral_list_no = list_no
+            # 목록 본문이 잘려 0건으로 세지면 배분이 무한대가 되므로 단독담보로 되돌린다.
+            item.shared_property_count = max(counts.get(list_no, 1), 1)
+            break

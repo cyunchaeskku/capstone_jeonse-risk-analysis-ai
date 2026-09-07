@@ -132,12 +132,16 @@ function formatKrw(value) {
   return `${Number(value).toLocaleString('ko-KR')}원`;
 }
 
-function sumActiveMortgages(inspection) {
+function activeMortgageItems(inspection) {
   const mortgages = inspection?.rights_section?.mortgages ?? [];
   // is_cancelled가 null이면 말소 여부 불확실 → 보수적으로 유효로 간주한다.
   return mortgages
     .filter((item) => item?.is_cancelled !== true)
-    .reduce((acc, item) => acc + toKrw(item?.amount_krw ?? 0), 0);
+    .map((item) => ({
+      amount_krw: toKrw(item?.amount_krw ?? 0),
+      // 공동담보 물건 수. 백엔드가 등기부 공동담보목록에서 세어 붙여준다.
+      shared_property_count: Number(item?.shared_property_count) || 1,
+    }));
 }
 
 function Field({ label, hint, children }) {
@@ -190,7 +194,17 @@ function AnalysisNewPage() {
   const registryType = inspection?.property_section?.registry_type ?? 'unknown';
   const registryOwnerName = inspection?.ownership_section?.current_owner?.name ?? '';
   const criticalTerms = inspection?.ownership_section?.critical_terms ?? [];
-  const mortgageTotalKrw = useMemo(() => sumActiveMortgages(inspection), [inspection]);
+  const mortgageItems = useMemo(() => activeMortgageItems(inspection), [inspection]);
+  const mortgageTotalKrw = mortgageItems.reduce((acc, item) => acc + item.amount_krw, 0);
+  // R2는 공동담보를 물건 수로 배분한 금액으로 판정한다 (민법 368①).
+  const allocatedMortgageKrw = mortgageItems.reduce(
+    (acc, item) => acc + Math.round(item.amount_krw / item.shared_property_count),
+    0,
+  );
+  const sharedPropertyCount = mortgageItems.reduce(
+    (acc, item) => Math.max(acc, item.shared_property_count),
+    1,
+  );
 
   function update(key, value) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -391,6 +405,7 @@ function AnalysisNewPage() {
           market_price_krw: marketPriceKrw,
           registry_type: registryType === 'land' ? 'unknown' : registryType,
           mortgage_total_krw: mortgageTotalKrw,
+          mortgage_items: mortgageItems,
           registry_owner_name: registryOwnerName,
           contract_owner_name: form.contractOwnerName.trim(),
           critical_terms: criticalTerms,
@@ -675,6 +690,19 @@ function AnalysisNewPage() {
                     <dt className="text-slate-500">유효 채권최고액 합계</dt>
                     <dd className="font-semibold text-ink">{formatKrw(mortgageTotalKrw)}</dd>
                   </div>
+                  {sharedPropertyCount > 1 && (
+                    <>
+                      <div className="flex justify-between gap-4">
+                        <dt className="text-slate-500">이 호실 부담분 (공동담보 배분)</dt>
+                        <dd className="font-semibold text-ink">{formatKrw(allocatedMortgageKrw)}</dd>
+                      </div>
+                      <p className="pt-2 text-xs leading-5 text-amber-700">
+                        이 근저당은 공동담보목록상 {sharedPropertyCount}건에 함께 걸려 있습니다. 민법
+                        제368조 제1항에 따라 배분한 금액으로 R2를 판정합니다. 다만 이 호실만 먼저 경매에
+                        넘어가는 이시배당에서는 원문 전액이 부담될 수 있습니다.
+                      </p>
+                    </>
+                  )}
                   {registryType === 'general_building' && (
                     <p className="pt-2 text-xs leading-5 text-amber-700">
                       일반건물은 건물 전체가 하나의 등기라 호실 시세가 없습니다. 근저당 비율(R2)은

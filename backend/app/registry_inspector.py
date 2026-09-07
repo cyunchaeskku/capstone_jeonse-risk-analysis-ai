@@ -170,10 +170,10 @@ def inspect_registry_text(registry_text: str, max_claim_amounts: list[dict[str, 
         ]
     )
     content = response.content if isinstance(response.content, str) else json.dumps(response.content, ensure_ascii=False)
-    return _coerce_inspection_payload(content)
+    return _coerce_inspection_payload(content, registry_text)
 
 
-def _coerce_inspection_payload(content: str) -> dict[str, Any]:
+def _coerce_inspection_payload(content: str, registry_text: str = "") -> dict[str, Any]:
     try:
         payload = json.loads(_strip_code_fence(content))
     except json.JSONDecodeError:
@@ -194,7 +194,64 @@ def _coerce_inspection_payload(content: str) -> dict[str, Any]:
     payload.setdefault("rights_section", {"mortgages": [], "other_rights": []})
     payload.setdefault("findings", [])
     payload.setdefault("needs_human_review", True)
+    _reject_unsourced_critical_terms(payload, registry_text)
     return payload
+
+
+# 시스템 프롬프트가 이 단어들과 대응 경고문을 예시로 나열하다 보니, 모델이 원문에 없는
+# 항목을 지어내는 일이 실제로 있었다(파크뷰 등기부: "신탁" 0회인데 신탁 critical_terms 생성).
+# critical_terms는 R4에서 30점 고위험 오버라이드를 직접 트리거하므로, 원문에 실제로
+# 등장하는 단어만 통과시킨다.
+_CRITICAL_TERM_ALIASES: dict[str, tuple[str, ...]] = {
+    "경매개시결정": ("경매개시결정", "경매개시"),
+}
+
+
+def _reject_unsourced_critical_terms(payload: dict[str, Any], registry_text: str) -> None:
+    if not registry_text:
+        return
+
+    section = payload.get("ownership_section")
+    if not isinstance(section, dict):
+        return
+    terms = section.get("critical_terms")
+    if not isinstance(terms, list):
+        return
+
+    kept: list[Any] = []
+    rejected_names: list[str] = []
+    for term in terms:
+        name = str((term or {}).get("term") or "").strip() if isinstance(term, dict) else ""
+        if name and any(alias in registry_text for alias in _CRITICAL_TERM_ALIASES.get(name, (name,))):
+            kept.append(term)
+        else:
+            rejected_names.append(name or "(이름 없음)")
+            section.setdefault("rejected_critical_terms", []).append(term)
+
+    if not rejected_names:
+        return
+
+    section["critical_terms"] = kept
+    # 같은 환각이 findings 카드로 다시 새어나오지 않도록, 기각된 단어를 언급하는 항목도 뺀다.
+    findings = payload.get("findings")
+    if isinstance(findings, list):
+        payload["findings"] = [
+            finding
+            for finding in findings
+            if not _mentions_any(finding, rejected_names)
+        ]
+    section.setdefault("notes", []).append(
+        "원문에서 확인되지 않아 제외한 권리침해 항목: " + ", ".join(rejected_names)
+    )
+
+
+def _mentions_any(finding: Any, names: list[str]) -> bool:
+    if not isinstance(finding, dict):
+        return False
+    haystack = " ".join(
+        str(finding.get(key) or "") for key in ("title", "evidence", "explanation", "recommended_action")
+    )
+    return any(name in haystack for name in names)
 
 
 def _format_max_claim_context(max_claim_amounts: list[dict[str, Any]]) -> str:

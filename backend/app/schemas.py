@@ -41,6 +41,8 @@ class RegistryMaxClaimItem(BaseModel):
     amount_krw: int
     raw_text: str
     page: int | None = None
+    collateral_list_no: str | None = None
+    shared_property_count: int = Field(default=1, ge=1, description="공동담보목록에 묶인 물건 수. 단독담보면 1")
 
 
 class RegistryParseResponse(BaseModel):
@@ -152,6 +154,13 @@ class ListingCheckAnalyzeResponse(BaseModel):
 RiskGrade = Literal["safe", "caution", "risk", "high_risk"]
 
 
+class MortgageItem(BaseModel):
+    """근저당 한 건. 공동담보면 하나의 채권최고액이 여러 물건에 걸린다."""
+
+    amount_krw: int = Field(..., ge=0, description="채권최고액 원문 금액")
+    shared_property_count: int = Field(..., ge=1, description="공동담보목록에 묶인 물건 수. 단독담보면 1")
+
+
 class RiskAssessRequest(BaseModel):
     """R1~R8 마법사가 수집한 입력. 모든 필드는 필수이며, 미확보는 빈 값으로 보내 `unknown`으로 판정한다."""
 
@@ -161,7 +170,11 @@ class RiskAssessRequest(BaseModel):
     registry_type: Literal["aggregate_building", "general_building", "unknown"] = Field(
         ..., description="등기 유형. R2는 집합건물에서만, R8은 일반건물에서만 판정한다"
     )
-    mortgage_total_krw: int = Field(..., ge=0, description="말소되지 않은 채권최고액 합계 (R2)")
+    mortgage_total_krw: int = Field(..., ge=0, description="말소되지 않은 채권최고액 합계 원문 (R8)")
+    mortgage_items: list[MortgageItem] = Field(
+        ...,
+        description="말소되지 않은 근저당별 채권최고액과 공동담보 물건 수 (R2). 공동담보는 민법 368①에 따라 배분한다",
+    )
     registry_owner_name: str = Field(..., description="등기부 갑구 현재 소유자명. 빈 문자열이면 미확보 (R3)")
     contract_owner_name: str = Field(..., description="계약서상 임대인명. 빈 문자열이면 미확보 (R3)")
     critical_terms: list[dict[str, Any]] = Field(

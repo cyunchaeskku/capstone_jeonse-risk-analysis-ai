@@ -32,6 +32,7 @@ from .schemas import (
     QaResponse,
     RegistryInspectResponse,
     RegistryMaxClaimItem,
+    MortgageItem,
     RegistryParseResponse,
     RiskAssessRequest,
     RiskAssessResponse,
@@ -436,6 +437,8 @@ def _registry_max_claim_items(result) -> list[RegistryMaxClaimItem]:
             amount_krw=item.amount_krw,
             raw_text=item.raw_text,
             page=item.page,
+            collateral_list_no=item.collateral_list_no,
+            shared_property_count=item.shared_property_count,
         )
         for item in result.max_claim_amounts
     ]
@@ -491,6 +494,29 @@ async def inspect_building_register(file: UploadFile = File(...)) -> dict[str, A
     return {"file_name": filename, "inspection": inspection}
 
 
+def _attach_shared_collateral_counts(
+    inspection: dict[str, Any],
+    max_claim_items: list[RegistryMaxClaimItem],
+) -> None:
+    """LLM이 뽑은 근저당 항목에 파서가 센 공동담보 물건 수를 붙인다.
+
+    말소 여부는 LLM만 알고, 공동담보 물건 수는 파서만 안다. R2 비례배분에는 둘 다
+    필요하므로 채권최고액 금액을 열쇠로 이어 붙인다.
+    """
+    counts = {item.amount_krw: item.shared_property_count for item in max_claim_items}
+    mortgages = (inspection.get("rights_section") or {}).get("mortgages")
+    if not isinstance(mortgages, list):
+        return
+    for mortgage in mortgages:
+        if not isinstance(mortgage, dict):
+            continue
+        try:
+            amount = int(str(mortgage.get("amount_krw") or 0).replace(",", ""))
+        except ValueError:
+            amount = 0
+        mortgage["shared_property_count"] = counts.get(amount, 1)
+
+
 @app.post("/registry/inspect", response_model=RegistryInspectResponse)
 async def inspect_registry_document(file: UploadFile = File(...)) -> RegistryInspectResponse:
     filename = file.filename or "registry.pdf"
@@ -528,6 +554,8 @@ async def inspect_registry_document(file: UploadFile = File(...)) -> RegistryIns
                 "action_hint": "잠시 후 다시 시도하거나 원문을 직접 확인하세요.",
             },
         ) from error
+
+    _attach_shared_collateral_counts(inspection, max_claim_items)
 
     return RegistryInspectResponse(
         filename=filename,
@@ -1604,16 +1632,31 @@ def answer_question(payload: QaRequest) -> QaResponse:
 # ---------------------------------------------------------------------------
 
 
+def _allocate_shared_collateral(mortgage_items: list[MortgageItem]) -> int:
+    """공동담보 채권최고액을 물건 수로 나눠 이 호실 몫만 남긴다 (민법 368① 비례배분).
+
+    원칙은 각 부동산의 경매대가에 비례한 배분이지만 다른 호실의 시세를 알 수 없으므로
+    물건 수 균등 배분으로 근사한다. 배분하지 않으면 건물 전체 채권최고액이 호실 한 채
+    시세로 나뉘어 전세가율이 수백~수천 %로 튄다.
+    """
+    return sum(round(item.amount_krw / item.shared_property_count) for item in mortgage_items)
+
+
 def _run_mortgage_ratio_check(
-    mortgage_total_krw: int,
+    mortgage_items: list[MortgageItem],
     deposit_krw: int,
     market_price_krw: int,
     registry_type: str,
 ) -> ListingCheckResult:
     """R2. 채권최고액 / 시세. 일반건물은 분모(시세)가 없어 구조적으로 판정 불가."""
     title = "근저당 비율"
+    mortgage_total_krw = sum(item.amount_krw for item in mortgage_items)
+    allocated_krw = _allocate_shared_collateral(mortgage_items)
+    is_shared = any(item.shared_property_count > 1 for item in mortgage_items)
     base_evidence = {
         "mortgage_total_krw": mortgage_total_krw,
+        "allocated_mortgage_krw": allocated_krw,
+        "shared_collateral": [item.model_dump() for item in mortgage_items],
         "market_price_krw": market_price_krw,
         "registry_type": registry_type,
     }
@@ -1643,17 +1686,27 @@ def _run_mortgage_ratio_check(
             evidence=base_evidence,
         )
 
-    ratio = mortgage_total_krw / market_price_krw
-    combined_ratio = (mortgage_total_krw + deposit_krw) / market_price_krw
+    ratio = allocated_krw / market_price_krw
+    combined_ratio = (allocated_krw + deposit_krw) / market_price_krw
     evidence = {
         **base_evidence,
         "deposit_krw": deposit_krw,
         "ratio": round(ratio, 4),
         "combined_ratio": round(combined_ratio, 4),
+        "worst_case_combined_ratio": round((mortgage_total_krw + deposit_krw) / market_price_krw, 4),
         "threshold_fail": 0.6,
         "threshold_warn": 0.4,
         "threshold_combined": 0.8,
     }
+    # 비례배분은 동시배당을 전제한다. 은행이 이 호실만 먼저 경매에 넣는 이시배당에서는
+    # 원문 전액이 걸릴 수 있으므로, 배분을 적용했다는 사실과 원문 금액을 함께 알린다.
+    shared_note = (
+        f" 공동담보 {max(item.shared_property_count for item in mortgage_items)}건에 비례배분한 금액 기준입니다."
+        f" 원문 채권최고액 합계는 {mortgage_total_krw:,}원이며, 이 호실만 먼저 경매에 넘어가는"
+        " 이시배당에서는 전액이 부담될 수 있습니다."
+        if is_shared
+        else ""
+    )
 
     # R2-b: 근저당 단독으로는 안전해도 보증금과 합쳐 80%를 넘으면 fail (§1 핵심 부등식)
     if combined_ratio > 0.8:
@@ -1661,7 +1714,7 @@ def _run_mortgage_ratio_check(
             code="mortgage_ratio",
             title=title,
             status="fail",
-            reason=f"채권최고액과 보증금의 합이 시세의 {combined_ratio:.0%}로 80%를 초과합니다. 경매 시 보증금 회수가 어렵습니다.",
+            reason=f"채권최고액과 보증금의 합이 시세의 {combined_ratio:.0%}로 80%를 초과합니다. 경매 시 보증금 회수가 어렵습니다.{shared_note}",
             evidence=evidence,
         )
     if ratio > 0.6:
@@ -1669,7 +1722,7 @@ def _run_mortgage_ratio_check(
             code="mortgage_ratio",
             title=title,
             status="fail",
-            reason=f"채권최고액이 시세의 {ratio:.0%}로 60%를 초과합니다.",
+            reason=f"채권최고액이 시세의 {ratio:.0%}로 60%를 초과합니다.{shared_note}",
             evidence=evidence,
         )
     if ratio > 0.4:
@@ -1677,14 +1730,14 @@ def _run_mortgage_ratio_check(
             code="mortgage_ratio",
             title=title,
             status="warn",
-            reason=f"채권최고액이 시세의 {ratio:.0%}입니다. 40~60% 구간으로 주의가 필요합니다.",
+            reason=f"채권최고액이 시세의 {ratio:.0%}입니다. 40~60% 구간으로 주의가 필요합니다.{shared_note}",
             evidence=evidence,
         )
     return ListingCheckResult(
         code="mortgage_ratio",
         title=title,
         status="pass",
-        reason=f"채권최고액이 시세의 {ratio:.0%}로 안전 구간입니다.",
+        reason=f"채권최고액이 시세의 {ratio:.0%}로 안전 구간입니다.{shared_note}",
         evidence=evidence,
     )
 
@@ -1895,7 +1948,12 @@ def _collect_override_reasons(
 
     market_price = payload.market_price_krw
     if market_price > 0:
-        combined = (payload.mortgage_total_krw + payload.deposit_krw) / market_price
+        # 공동담보 배분 후 금액으로 판단한다. 원문 합계를 쓰면 건물 전체 부채가
+        # 호실 한 채 시세로 나뉘어 시세 초과 오버라이드가 상시 발동한다.
+        mortgage_krw = by_code["mortgage_ratio"].evidence.get(
+            "allocated_mortgage_krw", payload.mortgage_total_krw
+        )
+        combined = (mortgage_krw + payload.deposit_krw) / market_price
         if combined > 1.0:
             reasons.append(
                 f"채권최고액과 보증금의 합이 시세의 {combined:.0%}로 시세를 초과합니다. (R2-b)"
@@ -1955,7 +2013,7 @@ async def assess_risk(payload: RiskAssessRequest) -> RiskAssessResponse:
     checks = [
         _run_deposit_to_market_check(payload.deposit_krw, payload.market_price_krw),
         _run_mortgage_ratio_check(
-            payload.mortgage_total_krw,
+            payload.mortgage_items,
             payload.deposit_krw,
             payload.market_price_krw,
             payload.registry_type,
