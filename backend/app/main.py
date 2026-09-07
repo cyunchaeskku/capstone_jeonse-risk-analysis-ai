@@ -32,6 +32,8 @@ from .schemas import (
     RegistryInspectResponse,
     RegistryMaxClaimItem,
     RegistryParseResponse,
+    RiskAssessRequest,
+    RiskAssessResponse,
     RootResponse,
 )
 from .services import AnalysisService
@@ -63,7 +65,8 @@ def _load_legal_code_map():
     if not _CSV_PATH.exists():
         return mapping
     try:
-        with open(_CSV_PATH, "r", encoding="utf-8") as f:
+        # BOM이 붙은 CSV라 utf-8로 열면 첫 컬럼명이 "\ufeff법정동코드"가 되어 매핑이 전부 비어버린다.
+        with open(_CSV_PATH, "r", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 if row.get("삭제일자") and row["삭제일자"].strip():
@@ -73,7 +76,9 @@ def _load_legal_code_map():
                 eup = (row.get("읍면동명") or "").strip()
                 code = (row.get("법정동코드") or "").strip()
                 if code:
-                    mapping[(sido, sig, eup)] = code
+                    # CSV는 "수원시권선구"처럼 붙여 쓰는데 주소 문자열은 "수원시 권선구"로 띄운다.
+                    # 공백을 없앤 형태로 저장해 양쪽을 맞춘다.
+                    mapping[(sido, sig.replace(" ", ""), eup)] = code
     except Exception as e:
         print(f"Error loading legal code CSV: {e}")
     return mapping
@@ -98,7 +103,7 @@ def _lookup_legal_code(address_str: str) -> str | None:
     # Try matching first few words
     for i in range(1, min(len(words), 5)):
         eup = words[i]
-        sig = " ".join(words[1:i])
+        sig = "".join(words[1:i])
         key = (sido, sig, eup)
         if key in _CSV_LEGAL_CODE_MAP:
             return _CSV_LEGAL_CODE_MAP[key]
@@ -125,40 +130,40 @@ def _remove_tags(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text)
 
 
-@app.get("/places/search")
-async def search_places(query: str = Query(..., description="검색할 장소명")):
+async def _search_place_items(client: httpx.AsyncClient, query: str) -> list[dict[str, str]]:
+    """네이버 지역검색. 상호명 기반이라 지번·도로명만 넣으면 빈 결과가 온다."""
     if not settings.naver_search_client_id or not settings.naver_search_client_secret:
         raise HTTPException(status_code=500, detail="Naver Search API 키가 설정되지 않았습니다.")
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            "https://openapi.naver.com/v1/search/local.json",
-            params={"query": query, "display": 10},
-            headers={
-                "X-Naver-Client-Id": settings.naver_search_client_id,
-                "X-Naver-Client-Secret": settings.naver_search_client_secret,
-            },
-            timeout=10.0,
-        )
-
+    response = await client.get(
+        "https://openapi.naver.com/v1/search/local.json",
+        params={"query": query, "display": 10},
+        headers={
+            "X-Naver-Client-Id": settings.naver_search_client_id,
+            "X-Naver-Client-Secret": settings.naver_search_client_secret,
+        },
+        timeout=10.0,
+    )
     if response.status_code != 200:
         raise HTTPException(status_code=502, detail="Naver Search API 호출 실패")
 
-    data = response.json()
-    items = data.get("items", [])
-
-    results = []
-    for item in items:
-        results.append({
+    return [
+        {
             "title": _remove_tags(item.get("title", "")),
             "roadAddress": item.get("roadAddress", ""),
             "address": item.get("address", ""),
             "category": item.get("category", ""),
             "mapx": item.get("mapx", ""),
             "mapy": item.get("mapy", ""),
-        })
+        }
+        for item in response.json().get("items", [])
+    ]
 
-    return {"items": results}
+
+@app.get("/places/search")
+async def search_places(query: str = Query(..., description="검색할 장소명")):
+    async with httpx.AsyncClient() as client:
+        return {"items": await _search_place_items(client, query)}
 
 
 def _summarize_building_item(item: dict[str, str]) -> dict[str, str]:
@@ -594,11 +599,179 @@ async def get_building_register(
         }
 
 
+# ---------------------------------------------------------------------------
+# 공시가격 기반 시세 — HUG 주택가격 산정 사다리 ② 단계
+# 실거래가가 없는 건물(통건물·거래 희소 다세대)의 시세를 여기서 확보한다.
+# ---------------------------------------------------------------------------
+
+_VWORLD_APART_PRICE_URL = "https://api.vworld.kr/ned/data/getApartHousingPriceAttr"
+# HUG가 실거래가 부재 시 적용하는 공시가격 배율.
+_OFFICIAL_PRICE_MULTIPLIER = 1.4
+
+
+def _build_pnu(address_str: str) -> str | None:
+    """지번 주소 -> PNU 19자리 (법정동코드10 + 대장구분1 + 본번4 + 부번4)."""
+    legal_code = _lookup_legal_code(address_str)
+    if not legal_code or len(legal_code) < 10:
+        return None
+    bun, ji = _extract_bun_ji(address_str)
+    if not bun:
+        return None
+    parts = address_str.strip().split()
+    # 산번지는 대장구분 2. 지번 토큰만 보고 판단해야 "부산"·"산본동" 같은 지명에 걸리지 않는다.
+    is_mountain = parts[-1].startswith("산") or (len(parts) >= 2 and parts[-2] == "산")
+    # _extract_bun_ji는 부번이 없으면 ""를 주는데 PNU에서는 "0000"으로 채워야 한다.
+    return f"{legal_code[:10]}{'2' if is_mountain else '1'}{bun}{(ji or '').zfill(4)}"
+
+
+# 한 번에 받아올 최대 행 수. 대단지는 이걸 넘겨 잘리므로 dongNm/hoNm으로 좁혀야 한다.
+_VWORLD_MAX_ROWS = 1000
+
+
+async def _fetch_official_price_units(
+    client: httpx.AsyncClient,
+    pnu: str,
+    stdr_year: str,
+    dong: str | None = None,
+    ho: str | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """PNU의 공동주택 공시가격을 세대 단위로 조회한다.
+
+    (세대 목록, 잘림 여부)를 돌려준다. 공시가격 대상이 아니면 빈 목록.
+    은마아파트처럼 PNU 하나에 수천 세대가 묶인 단지는 dongNm/hoNm을 함께 보내
+    서버에서 좁혀야 한다. 안 그러면 상한에 걸려 사용자의 세대가 조용히 빠진다.
+    """
+    if not settings.vworld_api_key:
+        return [], False
+    params: dict[str, Any] = {
+        "key": settings.vworld_api_key,
+        # domain 누락 시 키가 맞아도 INCORRECT_KEY로 거부된다.
+        "domain": settings.vworld_api_domain,
+        "pnu": pnu,
+        "format": "xml",
+        "stdrYear": stdr_year,
+        "numOfRows": _VWORLD_MAX_ROWS,
+        "pageNo": 1,
+    }
+    if dong:
+        params["dongNm"] = dong
+    if ho:
+        params["hoNm"] = ho
+    try:
+        response = await client.get(_VWORLD_APART_PRICE_URL, params=params, timeout=20)
+        root = ET.fromstring(response.text)
+    except (httpx.HTTPError, ET.ParseError) as exc:
+        logger.warning("공시가격 조회 실패 pnu=%s: %s", pnu, type(exc).__name__)
+        return [], False
+
+    units: dict[tuple[str, str], dict[str, Any]] = {}
+    for field in root.findall(".//field"):
+        def text(tag: str) -> str:
+            return (field.findtext(tag) or "").strip()
+
+        # stdrYear 필터를 걸어도 다른 연도가 섞여 오는 경우가 있어 행 단위로 다시 확인한다.
+        if text("stdrYear") != stdr_year:
+            continue
+        official_price = _to_int(text("pblntfPc"))
+        if official_price <= 0:
+            continue
+        dong, ho = text("dongNm"), text("hoNm")
+        # 같은 세대가 두 행씩 중복으로 내려온다(파크뷰 28세대 -> 56행). 값은 동일하다.
+        units.setdefault((dong, ho), {
+            "dong": dong,
+            "ho": ho,
+            "floor": text("floorNm"),
+            "area_m2": float(text("prvuseAr") or 0),
+            "building_name": text("aphusNm"),
+            "building_kind": text("aphusSeCodeNm"),
+            "official_price_krw": official_price,
+            "estimated_price_krw": int(official_price * _OFFICIAL_PRICE_MULTIPLIER),
+            "stdr_year": text("stdrYear"),
+        })
+
+    row_count = len(root.findall(".//field"))
+    return (
+        sorted(units.values(), key=lambda u: (u["dong"], _to_int(u["ho"]), u["ho"])),
+        row_count >= _VWORLD_MAX_ROWS,
+    )
+
+
+_VWORLD_ADDRESS_URL = "https://api.vworld.kr/req/address"
+
+
+# "…로 6", "…3길 12-3"처럼 도로명+건물번호로 끝나는 형태만 통과시킨다.
+# VWorld 지오코더는 아무 문자열이나 억지로 매칭시켜서("은마아파트" -> 창원시 구암동)
+# 이 가드가 없으면 엉뚱한 지번이 조용히 들어온다.
+_ROAD_ADDRESS_RE = re.compile(r"(로|길)\s*\d+(-\d+)?\s*$")
+
+
+def _looks_like_road_address(address: str) -> bool:
+    return bool(_ROAD_ADDRESS_RE.search(address.strip()))
+
+
+async def _road_address_to_parcel(client: httpx.AsyncClient, address: str) -> str | None:
+    """도로명주소 -> 지번주소. 좌표를 거쳐 변환한다(getcoord ROAD -> getAddress PARCEL)."""
+    if not settings.vworld_api_key:
+        return None
+    common = {"service": "address", "version": "2.0", "crs": "EPSG:4326",
+              "key": settings.vworld_api_key, "format": "json"}
+    try:
+        coord = await client.get(_VWORLD_ADDRESS_URL, params={
+            **common, "request": "getcoord", "address": address, "type": "ROAD",
+        }, timeout=20)
+        payload = coord.json().get("response", {})
+        if payload.get("status") != "OK":
+            return None
+        point = payload["result"]["point"]
+
+        parcel = await client.get(_VWORLD_ADDRESS_URL, params={
+            **common, "request": "getAddress",
+            "point": f"{point['x']},{point['y']}", "type": "PARCEL",
+        }, timeout=20)
+        payload = parcel.json().get("response", {})
+        if payload.get("status") != "OK":
+            return None
+        return (payload["result"][0].get("text") or "").strip() or None
+    except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+        logger.warning("도로명→지번 변환 실패 address=%s: %s", address, type(exc).__name__)
+        return None
+
+
+@app.get("/addresses/resolve")
+async def resolve_address(query: str = Query(..., description="지번·도로명·건물명 아무거나")):
+    """입력 문자열을 지번 후보로 바꾼다.
+
+    네이버 지역검색은 상호명 기반이라 주소를 넣으면 0건이 나온다.
+    그래서 지번이면 그대로 쓰고, 도로명이면 좌표를 거쳐 지번으로 바꾸고,
+    둘 다 아닐 때만 장소 검색으로 넘긴다.
+    """
+    text = query.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="검색어가 비어 있습니다.")
+
+    # ① 이미 지번이면 더 물을 게 없다. PNU가 만들어진다는 게 곧 지번이라는 증거다.
+    if _build_pnu(text):
+        return {"resolved_by": "jibun", "items": [{"title": text, "address": text, "roadAddress": ""}]}
+
+    async with httpx.AsyncClient() as client:
+        # ② 도로명 형태일 때만 지번으로 변환한다.
+        if _looks_like_road_address(text):
+            parcel = await _road_address_to_parcel(client, text)
+            if parcel and _build_pnu(parcel):
+                return {"resolved_by": "road", "items": [{"title": parcel, "address": parcel, "roadAddress": text}]}
+
+        # ③ 건물명·상호명은 장소 검색으로
+        items = [item for item in await _search_place_items(client, text) if item.get("address")]
+        return {"resolved_by": "place", "items": items}
+
+
 @app.get("/listing-checks/search")
 async def search_listing_for_checks(
     query: str = Query(..., description="지번 주소"),
     building_name: str | None = Query(None, description="선택된 건물명"),
     property_type: str = Query(default="apt", description="매물 종류: apt/offi/rh/sh"),
+    dong: str | None = Query(None, description="공시가격 조회용 동 이름"),
+    ho: str | None = Query(None, description="공시가격 조회용 호수"),
     debug: bool = Query(default=False, description="개발용 원본 거래 진단 포함"),
 ):
     if not settings.naver_maps_client_id or not settings.naver_maps_client_secret:
@@ -711,15 +884,34 @@ async def search_listing_for_checks(
         jeonse_items = [item for item in all_rent_items if _to_int(item.get("monthlyRent")) == 0]
         latest_rent_price_krw, latest_rent = _pick_latest_market_price_krw(all_rent_items)
 
-        # 시세 결정: 매매가 있으면 매매가 기준, 없으면 전세가 기준 (Mock 대비 실제 데이터 우선)
+        # 시세 사다리 (HUG 주택가격 산정 순서)
+        #   ① 해당 건물 매매 실거래가 → ② 공시가격 × 140% → ③ unknown
+        # 전세 보증금을 시세로 대체하면 전세가율이 "보증금/보증금"이 되어 규칙이 무력화되므로
+        # 절대 fallback으로 쓰지 않는다.
         market_price_krw = 0
         latest_trade = None
+        price_source = "unavailable"
         if trade_items:
             market_price_krw, latest_trade = _pick_latest_market_price_krw(trade_items)
             price_source = "actual-trade-transaction"
-        else:
-            market_price_krw, latest_trade = _pick_latest_market_price_krw(jeonse_items)
-            price_source = "latest-jeonse-transaction"
+
+        pnu = _build_pnu(query.strip())
+        official_units: list[dict[str, Any]] = []
+        official_selected: dict[str, Any] | None = None
+        official_truncated = False
+        if pnu:
+            official_units, official_truncated = await _fetch_official_price_units(
+                client, pnu, str(date.today().year), dong=dong, ho=ho
+            )
+            # 동·호수를 주면 API가 서버에서 좁혀주므로 남은 게 곧 사용자의 세대다.
+            if (dong or ho) and len(official_units) == 1:
+                official_selected = official_units[0]
+            elif not dong and not ho and len(official_units) == 1:
+                official_selected = official_units[0]
+
+        if market_price_krw <= 0 and official_selected:
+            market_price_krw = official_selected["estimated_price_krw"]
+            price_source = "official-price-x140"
 
         if latest_rent:
             logger.info(
@@ -787,6 +979,14 @@ async def search_listing_for_checks(
             "price_krw": market_price_krw,
             "source": price_source,
             "latest_trade": latest_trade,
+        },
+        "official_price": {
+            "pnu": pnu,
+            # 세대가 여럿인데 아직 못 고른 상태면 프론트가 선택 UI를 띄워야 한다.
+            "needs_unit_selection": bool(official_units) and official_selected is None,
+            "truncated": official_truncated,
+            "selected": official_selected,
+            "units": official_units,
         },
         **({
             "debug": {
@@ -1016,6 +1216,9 @@ _CHECK_WEIGHTS: dict[str, int] = {
     "duplicate_contract": 25,
     "mortgage_ratio": 30,
     "owner_mismatch": 15,
+    "rights_encumbrance": 30,
+    "illegal_building": 15,
+    "senior_deposit": 25,
 }
 
 
@@ -1374,3 +1577,384 @@ def answer_question(payload: QaRequest) -> QaResponse:
                 "action_hint": "잠시 후 다시 시도하세요.",
             },
         ) from error
+
+
+# ---------------------------------------------------------------------------
+# R1~R8 마법사 (`/risk/assess`) — docs/전세사기위험도판별핵심로직.md 구현
+# ---------------------------------------------------------------------------
+
+
+def _run_mortgage_ratio_check(
+    mortgage_total_krw: int,
+    deposit_krw: int,
+    market_price_krw: int,
+    registry_type: str,
+) -> ListingCheckResult:
+    """R2. 채권최고액 / 시세. 일반건물은 분모(시세)가 없어 구조적으로 판정 불가."""
+    title = "근저당 비율"
+    base_evidence = {
+        "mortgage_total_krw": mortgage_total_krw,
+        "market_price_krw": market_price_krw,
+        "registry_type": registry_type,
+    }
+
+    if registry_type == "unknown":
+        return ListingCheckResult(
+            code="mortgage_ratio",
+            title=title,
+            status="unknown",
+            reason="등기부등본이 제출되지 않아 채권최고액을 확인할 수 없습니다.",
+            evidence=base_evidence,
+        )
+    if registry_type == "general_building":
+        return ListingCheckResult(
+            code="mortgage_ratio",
+            title=title,
+            status="unknown",
+            reason="일반건물(단독·다가구)은 건물 전체가 하나의 등기라 호실 시세가 산출되지 않습니다. 분모를 확보할 수 없어 판정하지 않습니다.",
+            evidence=base_evidence,
+        )
+    if market_price_krw <= 0:
+        return ListingCheckResult(
+            code="mortgage_ratio",
+            title=title,
+            status="unknown",
+            reason="시세를 확보하지 못해 근저당 비율을 계산할 수 없습니다.",
+            evidence=base_evidence,
+        )
+
+    ratio = mortgage_total_krw / market_price_krw
+    combined_ratio = (mortgage_total_krw + deposit_krw) / market_price_krw
+    evidence = {
+        **base_evidence,
+        "deposit_krw": deposit_krw,
+        "ratio": round(ratio, 4),
+        "combined_ratio": round(combined_ratio, 4),
+        "threshold_fail": 0.6,
+        "threshold_warn": 0.4,
+        "threshold_combined": 0.8,
+    }
+
+    # R2-b: 근저당 단독으로는 안전해도 보증금과 합쳐 80%를 넘으면 fail (§1 핵심 부등식)
+    if combined_ratio > 0.8:
+        return ListingCheckResult(
+            code="mortgage_ratio",
+            title=title,
+            status="fail",
+            reason=f"채권최고액과 보증금의 합이 시세의 {combined_ratio:.0%}로 80%를 초과합니다. 경매 시 보증금 회수가 어렵습니다.",
+            evidence=evidence,
+        )
+    if ratio > 0.6:
+        return ListingCheckResult(
+            code="mortgage_ratio",
+            title=title,
+            status="fail",
+            reason=f"채권최고액이 시세의 {ratio:.0%}로 60%를 초과합니다.",
+            evidence=evidence,
+        )
+    if ratio > 0.4:
+        return ListingCheckResult(
+            code="mortgage_ratio",
+            title=title,
+            status="warn",
+            reason=f"채권최고액이 시세의 {ratio:.0%}입니다. 40~60% 구간으로 주의가 필요합니다.",
+            evidence=evidence,
+        )
+    return ListingCheckResult(
+        code="mortgage_ratio",
+        title=title,
+        status="pass",
+        reason=f"채권최고액이 시세의 {ratio:.0%}로 안전 구간입니다.",
+        evidence=evidence,
+    )
+
+
+def _split_owner_names(value: str) -> list[str]:
+    return [name for name in re.split(r"[,/·\s]+", value.strip()) if name]
+
+
+def _run_owner_mismatch_check(contract_owner_name: str, registry_owner_name: str) -> ListingCheckResult:
+    """R3. 계약서상 임대인이 등기부 갑구 소유자와 일치하는지. 공동소유면 전원이 계약 당사자여야 한다."""
+    title = "계약서 임대인과 등기부 소유자 일치"
+    registry_owners = _split_owner_names(registry_owner_name)
+    contract_owners = _split_owner_names(contract_owner_name)
+    evidence = {
+        "registry_owners": registry_owners,
+        "contract_owners": contract_owners,
+    }
+
+    if not registry_owners or not contract_owners:
+        return ListingCheckResult(
+            code="owner_mismatch",
+            title=title,
+            status="unknown",
+            reason="등기부 소유자명 또는 계약서상 임대인명이 없어 대조할 수 없습니다.",
+            evidence=evidence,
+        )
+
+    missing = [owner for owner in registry_owners if owner not in contract_owners]
+    if missing:
+        return ListingCheckResult(
+            code="owner_mismatch",
+            title=title,
+            status="fail",
+            reason=f"등기부상 소유자 {', '.join(missing)}이(가) 계약 당사자에 포함되어 있지 않습니다.",
+            evidence={**evidence, "missing_owners": missing},
+        )
+    return ListingCheckResult(
+        code="owner_mismatch",
+        title=title,
+        status="pass",
+        reason="등기부상 소유자가 모두 계약 당사자에 포함되어 있습니다. 다만 신분증·위임장 확인은 별도로 필요합니다.",
+        evidence=evidence,
+    )
+
+
+def _run_rights_encumbrance_check(
+    critical_terms: list[dict[str, Any]],
+    registry_type: str,
+) -> ListingCheckResult:
+    """R4. 압류·가압류·가처분·가등기·경매개시결정·신탁. 하나라도 유효하면 고위험 오버라이드."""
+    title = "권리침해 등기 존재 여부"
+
+    if registry_type == "unknown":
+        return ListingCheckResult(
+            code="rights_encumbrance",
+            title=title,
+            status="unknown",
+            reason="등기부등본이 제출되지 않아 권리침해 등기를 확인할 수 없습니다.",
+            evidence={"critical_terms": critical_terms},
+        )
+
+    # is_cancelled가 null이면 말소 여부 불확실 → 보수적으로 유효로 간주한다.
+    active = [term for term in critical_terms if term.get("is_cancelled") is not True]
+    if not active:
+        return ListingCheckResult(
+            code="rights_encumbrance",
+            title=title,
+            status="pass",
+            reason="말소되지 않은 압류·가압류·가처분·가등기·경매·신탁 등기가 없습니다.",
+            evidence={"critical_terms": critical_terms},
+        )
+
+    terms = ", ".join(str(term.get("term") or "권리침해") for term in active)
+    has_trust = any("신탁" in str(term.get("term") or "") for term in active)
+    reason = f"말소되지 않은 {terms} 등기가 있습니다."
+    if has_trust:
+        reason += " 신탁등기가 있으면 처분 권한이 수탁자에게 있어, 등기부상 소유자와 계약해도 무효가 될 수 있습니다. 신탁회사 동의서를 반드시 확인하세요."
+    return ListingCheckResult(
+        code="rights_encumbrance",
+        title=title,
+        status="fail",
+        reason=reason,
+        evidence={"critical_terms": critical_terms, "active_terms": active, "has_trust": has_trust},
+    )
+
+
+def _run_illegal_building_check(has_illegal_building: bool) -> ListingCheckResult:
+    """R6. 위반건축물 표시. 보증보험 가입 거절 사유."""
+    title = "위반건축물 여부"
+    if has_illegal_building:
+        return ListingCheckResult(
+            code="illegal_building",
+            title=title,
+            status="fail",
+            reason="건축물대장에 위반건축물로 표시되어 있습니다. 전세보증보험 가입이 거절되고 이행강제금 대상이 될 수 있습니다.",
+            evidence={"has_illegal_building": True},
+        )
+    return ListingCheckResult(
+        code="illegal_building",
+        title=title,
+        status="pass",
+        reason="건축물대장에 위반건축물 표시가 없습니다.",
+        evidence={"has_illegal_building": False},
+    )
+
+
+def _run_duplicate_contract_count_check(count: int) -> ListingCheckResult:
+    """R7. 동일 건물 최근 12개월 순수 전세 거래 건수. 세대수 정규화 전까지는 참고 신호."""
+    return _run_duplicate_contract_check("", [{"monthlyRent": 0} for _ in range(count)])
+
+
+def _run_senior_deposit_check(
+    senior_deposit_krw: int,
+    mortgage_total_krw: int,
+    deposit_krw: int,
+    market_price_krw: int,
+    registry_type: str,
+) -> ListingCheckResult:
+    """R8. 일반건물(단독·다가구) 전용. 선순위 보증금까지 합산한 §1 핵심 부등식."""
+    title = "선순위 보증금 합산 부담률"
+    evidence = {
+        "senior_deposit_krw": senior_deposit_krw,
+        "mortgage_total_krw": mortgage_total_krw,
+        "deposit_krw": deposit_krw,
+        "market_price_krw": market_price_krw,
+        "registry_type": registry_type,
+    }
+
+    if registry_type == "unknown":
+        return ListingCheckResult(
+            code="senior_deposit",
+            title=title,
+            status="unknown",
+            reason="등기부등본이 제출되지 않아 등기 유형을 알 수 없습니다. 일반건물이면 선순위 보증금 확인이 필수입니다.",
+            evidence=evidence,
+        )
+    if registry_type != "general_building":
+        return ListingCheckResult(
+            code="senior_deposit",
+            title=title,
+            status="pass",
+            reason="집합건물은 호실별로 등기가 분리되어 선순위 보증금 문제가 발생하지 않습니다.",
+            evidence=evidence,
+        )
+    if market_price_krw <= 0:
+        return ListingCheckResult(
+            code="senior_deposit",
+            title=title,
+            status="unknown",
+            reason="시세를 확보하지 못해 선순위 보증금 부담률을 계산할 수 없습니다.",
+            evidence=evidence,
+        )
+
+    total = senior_deposit_krw + mortgage_total_krw + deposit_krw
+    ratio = total / market_price_krw
+    evidence = {**evidence, "total_burden_krw": total, "ratio": round(ratio, 4), "threshold": 0.8}
+    if ratio > 0.8:
+        return ListingCheckResult(
+            code="senior_deposit",
+            title=title,
+            status="fail",
+            reason=f"선순위 보증금·채권최고액·내 보증금의 합이 시세의 {ratio:.0%}로 80%를 초과합니다.",
+            evidence=evidence,
+        )
+    return ListingCheckResult(
+        code="senior_deposit",
+        title=title,
+        status="pass",
+        reason=f"선순위 보증금까지 합산한 부담률이 시세의 {ratio:.0%}로 안전 구간입니다.",
+        evidence=evidence,
+    )
+
+
+def _risk_grade(score: int) -> str:
+    if score >= 60:
+        return "high_risk"
+    if score >= 30:
+        return "risk"
+    if score >= 15:
+        return "caution"
+    return "safe"
+
+
+def _collect_override_reasons(
+    checks: list[ListingCheckResult],
+    payload: RiskAssessRequest,
+) -> list[str]:
+    """§4-5 고위험 오버라이드. 치명적 단일 결함이 가중 합산으로 희석되는 것을 막는다."""
+    by_code = {check.code: check for check in checks}
+    reasons: list[str] = []
+
+    if by_code["rights_encumbrance"].status == "fail":
+        reasons.append("말소되지 않은 압류·가압류·경매개시결정·신탁 등기가 존재합니다. (R4)")
+    if by_code["owner_mismatch"].status == "fail":
+        reasons.append("계약서상 임대인이 등기부상 소유자와 일치하지 않습니다. (R3)")
+
+    market_price = payload.market_price_krw
+    if market_price > 0:
+        combined = (payload.mortgage_total_krw + payload.deposit_krw) / market_price
+        if combined > 1.0:
+            reasons.append(
+                f"채권최고액과 보증금의 합이 시세의 {combined:.0%}로 시세를 초과합니다. (R2-b)"
+            )
+    return reasons
+
+
+async def _generate_risk_assessment_explanation(
+    payload: RiskAssessRequest,
+    checks: list[ListingCheckResult],
+    summary: ListingCheckSummary,
+    risk_score: int,
+    risk_grade: str,
+    override_reasons: list[str],
+) -> str:
+    if not settings.openai_api_key or not settings.openai_api_key.strip():
+        return "규칙 기반 점검 결과입니다. OPENAI_API_KEY가 없어 자연어 설명은 생략됩니다."
+
+    model = ChatOpenAI(
+        model=settings.openai_model,
+        api_key=settings.openai_api_key,
+        temperature=0.1,
+    )
+    context_data = {
+        "매물": payload.listing_name,
+        "보증금": payload.deposit_krw,
+        "시세": payload.market_price_krw,
+        "등기 유형": payload.registry_type,
+        "규칙 점검 결과": [check.model_dump() for check in checks],
+        "종합 상태": summary.model_dump(),
+        "위험 점수": risk_score,
+        "위험 등급": risk_grade,
+        "고위험 오버라이드 사유": override_reasons,
+    }
+    messages = [
+        SystemMessage(content=_LISTING_CHECK_SYSTEM_PROMPT),
+        HumanMessage(
+            content="다음 점검 결과를 임차인이 이해할 수 있게 설명해줘. "
+            "판정은 이미 규칙이 내렸으니 숫자나 등급을 바꾸지 말고 설명만 해줘:\n\n"
+            + json.dumps(context_data, ensure_ascii=False, indent=2)
+        ),
+    ]
+    try:
+        result = await asyncio.to_thread(model.invoke, messages)
+        content = result.content if isinstance(result.content, str) else str(result.content)
+        return content.strip() or "점검 결과를 분석했지만 설명 문장을 생성하지 못했습니다."
+    except Exception as exc:
+        logger.warning("risk assessment explanation failed: %s", exc)
+        return "규칙 결과를 기반으로 점검을 완료했습니다. 모델 설명 생성 중 오류가 발생했습니다."
+
+
+@app.post("/risk/assess", response_model=RiskAssessResponse)
+async def assess_risk(payload: RiskAssessRequest) -> RiskAssessResponse:
+    if payload.deposit_krw <= 0:
+        raise HTTPException(status_code=400, detail="deposit_krw는 0보다 커야 합니다.")
+
+    checks = [
+        _run_deposit_to_market_check(payload.deposit_krw, payload.market_price_krw),
+        _run_mortgage_ratio_check(
+            payload.mortgage_total_krw,
+            payload.deposit_krw,
+            payload.market_price_krw,
+            payload.registry_type,
+        ),
+        _run_owner_mismatch_check(payload.contract_owner_name, payload.registry_owner_name),
+        _run_rights_encumbrance_check(payload.critical_terms, payload.registry_type),
+        _run_residential_use_check(
+            {"building_type": payload.building_type, "detail_use": payload.detail_use}
+        ),
+        _run_illegal_building_check(payload.has_illegal_building),
+        _run_duplicate_contract_count_check(payload.recent_jeonse_count),
+        _run_senior_deposit_check(
+            payload.senior_deposit_krw,
+            payload.mortgage_total_krw,
+            payload.deposit_krw,
+            payload.market_price_krw,
+            payload.registry_type,
+        ),
+    ]
+    summary = _summarize_check_overall(checks)
+    risk_score = _compute_risk_score(checks)
+    override_reasons = _collect_override_reasons(checks, payload)
+    risk_grade = "high_risk" if override_reasons else _risk_grade(risk_score)
+    explanation = await _generate_risk_assessment_explanation(
+        payload, checks, summary, risk_score, risk_grade, override_reasons
+    )
+    return RiskAssessResponse(
+        checks=checks,
+        summary=summary,
+        risk_score=risk_score,
+        risk_grade=risk_grade,
+        override_reasons=override_reasons,
+        llm_explanation=explanation,
+    )

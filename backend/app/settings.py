@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     naver_maps_client_secret: str | None = Field(default=None, alias="NAVER_MAPS_CLIENT_SECRET")
     naver_search_client_id: str | None = Field(default=None, alias="NAVER_SEARCH_CLIENT_ID")
     naver_search_client_secret: str | None = Field(default=None, alias="NAVER_SEARCH_CLIENT_SECRET")
+    vworld_api_key: str | None = Field(default=None, alias="VWORLD_API_KEY")
+    # VWorld는 인증키 발급 시 등록한 서비스URL을 domain 파라미터로 함께 보내야 한다.
+    # 빠뜨리면 키가 맞아도 INCORRECT_KEY로 거부된다.
+    vworld_api_domain: str = Field(default="http://localhost:5173", alias="VWORLD_API_DOMAIN")
     openai_model: str = Field(default="gpt-4.1-nano", alias="OPENAI_MODEL")
     vector_db_path: str = Field(default="vectorDB/laws_faiss", alias="VECTOR_DB_PATH")
     vector_db_embedding_model: str = Field(

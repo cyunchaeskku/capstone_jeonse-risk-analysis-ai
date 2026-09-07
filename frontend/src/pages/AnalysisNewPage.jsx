@@ -1,261 +1,814 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
-const uploadSections = [
+// docs/전세사기위험도판별핵심로직.md §3 규칙 카탈로그를 그대로 단계로 옮긴 것.
+// source: B = 등기부 PDF 업로드, C = 사용자 수기 입력.
+// R9(보증보험)는 공식 API가 없어 이 흐름에서 제외한다.
+const STEPS = [
   {
-    title: '계약서 초안 또는 사본',
-    description: '특약, 계약 당사자 정보, 보증금과 잔금 일정을 확인하기 위한 문서 영역입니다.',
+    id: 'R1',
+    source: 'C',
+    title: '전세가율',
+    code: 'deposit_to_market_ratio',
+    criterion: '보증금 / 시세 > 80% → 위험',
   },
   {
-    title: '등기부등본',
-    description: '소유권과 선순위 권리관계를 우선 검토하기 위한 핵심 문서입니다.',
+    id: 'R2',
+    source: 'B',
+    title: '근저당 비율',
+    code: 'mortgage_ratio',
+    criterion: '채권최고액 / 시세 > 60% → 위험, (채권최고액 + 보증금) / 시세 > 80% → 위험',
   },
   {
-    title: '추가 확인 자료',
-    description: '건축물대장, 중개사 설명자료, 임대인 신분 확인 자료 등을 추가할 수 있습니다.',
+    id: 'R3',
+    source: 'C',
+    title: '소유자 일치',
+    code: 'owner_mismatch',
+    criterion: '계약서상 임대인 ≠ 등기부 소유자 → 위험 (공동소유는 전원 포함)',
+  },
+  {
+    id: 'R4',
+    source: 'B',
+    title: '권리침해 등기',
+    code: 'rights_encumbrance',
+    criterion: '압류·가압류·가처분·가등기·경매·신탁이 미말소면 즉시 고위험',
+  },
+  {
+    id: 'R5',
+    source: 'C',
+    title: '건축물 용도',
+    code: 'residential_use',
+    criterion: '주용도에 주거 관련 용도가 없으면 위험',
+  },
+  {
+    id: 'R6',
+    source: 'C',
+    title: '위반건축물',
+    code: 'illegal_building',
+    criterion: '건축물대장 위반건축물 표시 → 위험 (보증보험 거절 사유)',
+  },
+  {
+    id: 'R7',
+    source: 'C',
+    title: '중복 계약 집중도',
+    code: 'duplicate_contract',
+    criterion: '동일 건물 최근 12개월 순수 전세 5건 이상 → 주의',
+  },
+  {
+    id: 'R8',
+    source: 'C',
+    title: '선순위 보증금',
+    code: 'senior_deposit',
+    criterion: '일반건물 전용. (선순위 보증금 + 채권최고액 + 보증금) / 시세 > 80% → 위험',
   },
 ];
 
-const checklist = [
-  '주소와 계약서 기재 주소가 일치하는지 확인',
-  '보증금, 계약금, 잔금 일정이 명확한지 확인',
-  '등기부상 소유자와 계약 당사자가 동일한지 확인',
+const SOURCE_LABEL = {
+  B: '등기부 PDF 업로드',
+  C: '직접 입력',
+};
+
+// 원래는 공공 API(출처 A)에서 채워야 하는 값이라 임시 기본값을 둔다.
+const INITIAL_FORM = {
+  listingName: '',
+  depositKrw: '',
+  contractOwnerName: '',
+  buildingType: '공동주택',
+  detailUse: '다세대주택',
+  hasIllegalBuilding: 'false',
+  recentJeonseCount: '2',
+  seniorDepositKrw: '0',
+};
+
+const PROPERTY_TYPES = [
+  { value: 'apt', label: '아파트' },
+  { value: 'offi', label: '오피스텔' },
+  { value: 'rh', label: '연립/다세대' },
+  { value: 'sh', label: '단독/다가구' },
 ];
+
+// 시세를 어디서 얻었는지 화면에 그대로 드러낸다. 추정치를 실거래가처럼 보이게 하면 안 된다.
+const PRICE_SOURCE_LABEL = {
+  'actual-trade-transaction': '매매 실거래가',
+  'official-price-x140': '공시가격 × 140%',
+  unavailable: '확인 불가',
+};
+
+const GRADE_META = {
+  safe: { label: '안전', tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+  caution: { label: '주의', tone: 'text-amber-700 bg-amber-50 border-amber-200' },
+  risk: { label: '위험', tone: 'text-orange-700 bg-orange-50 border-orange-200' },
+  high_risk: { label: '고위험', tone: 'text-red-700 bg-red-50 border-red-200' },
+};
+
+const STATUS_META = {
+  pass: { label: '통과', tone: 'bg-emerald-50 text-emerald-700' },
+  warn: { label: '주의', tone: 'bg-amber-50 text-amber-700' },
+  fail: { label: '위험', tone: 'bg-red-50 text-red-700' },
+  unknown: { label: '판단 불가', tone: 'bg-slate-100 text-slate-600' },
+};
+
+const REGISTRY_TYPE_LABEL = {
+  aggregate_building: '집합건물 (아파트·빌라·오피스텔)',
+  general_building: '일반건물 (단독·다가구)',
+  land: '토지',
+  unknown: '확인 불가',
+};
+
+function toKrw(value) {
+  const parsed = Number(String(value).replace(/[^0-9]/g, ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatKrw(value) {
+  if (value === null || value === undefined) return '-';
+  return `${Number(value).toLocaleString('ko-KR')}원`;
+}
+
+function sumActiveMortgages(inspection) {
+  const mortgages = inspection?.rights_section?.mortgages ?? [];
+  // is_cancelled가 null이면 말소 여부 불확실 → 보수적으로 유효로 간주한다.
+  return mortgages
+    .filter((item) => item?.is_cancelled !== true)
+    .reduce((acc, item) => acc + toKrw(item?.amount_krw ?? 0), 0);
+}
+
+function Field({ label, hint, children }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      {children}
+      {hint && <span className="mt-2 block text-xs leading-5 text-slate-500">{hint}</span>}
+    </label>
+  );
+}
+
+const inputClass =
+  'mt-2 w-full rounded-2xl border border-coral/20 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-sage/60';
 
 function AnalysisNewPage() {
-  const registryInputRef = useRef(null);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [form, setForm] = useState(INITIAL_FORM);
+  const [registry, setRegistry] = useState(null);
   const [registryFileName, setRegistryFileName] = useState('');
-  const [registryParseResult, setRegistryParseResult] = useState(null);
-  const [registryUploadStatus, setRegistryUploadStatus] = useState('idle');
+  const [registryStatus, setRegistryStatus] = useState('idle');
   const [registryError, setRegistryError] = useState('');
+  const [result, setResult] = useState(null);
+  const [submitState, setSubmitState] = useState('idle');
+  const [submitError, setSubmitError] = useState('');
+  const fileInputRef = useRef(null);
 
-  const isRegistryUploading = registryUploadStatus === 'uploading';
+  // R1 매물 특정 — ① 주소 검색 → ② 건물 확정 → ③ 세대 선택 순으로만 열린다.
+  const [propertyType, setPropertyType] = useState('rh');
+  const [placeQuery, setPlaceQuery] = useState('');
+  const [places, setPlaces] = useState([]);
+  const [selectedPlace, setSelectedPlace] = useState(null);
+  const [lookup, setLookup] = useState(null);
+  const [unitDong, setUnitDong] = useState('');
+  const [unitKey, setUnitKey] = useState('');
+  const [lookupState, setLookupState] = useState('idle');
+  const [lookupError, setLookupError] = useState('');
 
-  async function handleRegistryFileChange(event) {
+  const step = STEPS[stepIndex];
+  const isLastStep = stepIndex === STEPS.length - 1;
+
+  const inspection = registry?.inspection ?? null;
+  const registryType = inspection?.property_section?.registry_type ?? 'unknown';
+  const registryOwnerName = inspection?.ownership_section?.current_owner?.name ?? '';
+  const criticalTerms = inspection?.ownership_section?.critical_terms ?? [];
+  const mortgageTotalKrw = useMemo(() => sumActiveMortgages(inspection), [inspection]);
+
+  function update(key, value) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  const units = lookup?.official_price?.units ?? [];
+  const dongList = useMemo(() => [...new Set(units.map((unit) => unit.dong))], [units]);
+  const selectedUnit = units.find((unit) => `${unit.dong}/${unit.ho}` === unitKey) ?? null;
+
+  // 시세 사다리: ① 매매 실거래가 → ② 공시가격 × 140% → ③ 확인 불가.
+  // 실거래가가 잡히면 세대를 고를 필요가 없다.
+  const tradePriceKrw = toKrw(lookup?.market_price?.price_krw ?? 0);
+  const hasTradePrice = tradePriceKrw > 0 && lookup?.market_price?.source === 'actual-trade-transaction';
+  const marketPriceKrw = hasTradePrice ? tradePriceKrw : (selectedUnit?.estimated_price_krw ?? 0);
+  const priceSource = hasTradePrice
+    ? 'actual-trade-transaction'
+    : (selectedUnit ? 'official-price-x140' : 'unavailable');
+
+  function resetLookup() {
+    setLookup(null);
+    setUnitDong('');
+    setUnitKey('');
+    setLookupError('');
+    update('listingName', '');
+  }
+
+  async function searchPlaces() {
+    if (!placeQuery.trim()) return;
+    setLookupState('searching');
+    setPlaces([]);
+    setSelectedPlace(null);
+    resetLookup();
+    try {
+      const response = await fetch(`${API_BASE}/addresses/resolve?query=${encodeURIComponent(placeQuery.trim())}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail ?? '주소를 해석하지 못했습니다.');
+      const items = payload.items ?? [];
+      setPlaces(items);
+      if (!items.length) {
+        setLookupError('찾지 못했습니다. 시·도부터 포함한 지번 주소로 넣어 보세요. (예: 경기도 수원시 권선구 탑동 814-2)');
+      } else if (items.length === 1) {
+        // 지번·도로명은 후보가 하나뿐이라 고르게 할 이유가 없다.
+        // await하지 않으면 아래 finally가 로딩 표시를 먼저 꺼버린다.
+        await selectPlace(items[0]);
+      }
+    } catch (error) {
+      setLookupError(error instanceof Error ? error.message : '장소 검색에 실패했습니다.');
+    } finally {
+      setLookupState('idle');
+    }
+  }
+
+  async function selectPlace(place) {
+    setSelectedPlace(place);
+    setLookupState('loading');
+    resetLookup();
+    try {
+      const params = new URLSearchParams({
+        query: place.address || place.roadAddress,
+        building_name: place.title,
+        property_type: propertyType,
+      });
+      const response = await fetch(`${API_BASE}/listing-checks/search?${params}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail ?? '건물 정보를 가져오지 못했습니다.');
+      setLookup(payload);
+      const found = payload.official_price?.units ?? [];
+      // 세대가 하나뿐이면 고를 게 없다.
+      if (found.length === 1) {
+        setUnitDong(found[0].dong);
+        setUnitKey(`${found[0].dong}/${found[0].ho}`);
+      }
+      update('listingName', payload.building?.selected?.building_name || place.title);
+    } catch (error) {
+      setLookupError(error instanceof Error ? error.message : '건물 정보를 가져오지 못했습니다.');
+    } finally {
+      setLookupState('idle');
+    }
+  }
+
+  async function handleRegistryUpload(event) {
     const file = event.target.files?.[0];
     if (!file) return;
 
     setRegistryFileName(file.name);
-    setRegistryParseResult(null);
     setRegistryError('');
+    setRegistry(null);
 
     if (file.type && file.type !== 'application/pdf') {
-      setRegistryUploadStatus('idle');
+      setRegistryStatus('idle');
       setRegistryError('PDF 파일만 업로드할 수 있습니다.');
+      event.target.value = '';
       return;
     }
 
     const formData = new FormData();
     formData.append('file', file);
-    setRegistryUploadStatus('uploading');
+    setRegistryStatus('uploading');
 
     try {
-      const response = await fetch(`${API_BASE}/registry/inspect`, {
-        method: 'POST',
-        body: formData,
-      });
+      const response = await fetch(`${API_BASE}/registry/inspect`, { method: 'POST', body: formData });
       const payload = await response.json().catch(() => ({}));
-
       if (!response.ok) {
         const message =
           typeof payload.detail === 'string'
             ? payload.detail
-            : payload.detail?.message ?? `업로드 실패 (${response.status})`;
+            : (payload.detail?.message ?? `업로드 실패 (${response.status})`);
         throw new Error(message);
       }
-
-      setRegistryParseResult(payload);
-      setRegistryUploadStatus(payload.status ?? 'needs_review');
+      setRegistry(payload);
+      setRegistryStatus('done');
     } catch (error) {
-      setRegistryUploadStatus('idle');
-      setRegistryError(error instanceof Error ? error.message : '등기부등본 파싱에 실패했습니다.');
+      setRegistryStatus('idle');
+      setRegistryError(error instanceof Error ? error.message : '등기부등본 분석에 실패했습니다.');
     } finally {
       event.target.value = '';
     }
   }
 
-  function formatKrw(value) {
-    if (value === null || value === undefined) return '-';
-    return `${Number(value).toLocaleString('ko-KR')}원`;
+  function canProceed() {
+    if (step.id === 'R1') {
+      // 시세는 0이어도 넘어간다. 확인 불가는 unknown으로 정직하게 판정되는 게 맞다.
+      return Boolean(lookup) && toKrw(form.depositKrw) > 0;
+    }
+    return true;
   }
 
-  function renderUploadAction(section) {
-    if (section.title !== '등기부등본') {
-      return (
-        <button
-          type="button"
-          className="inline-flex min-w-36 items-center justify-center rounded-full border border-coral/25 bg-coral/10 px-5 py-3 text-sm font-semibold text-ink transition hover:border-coral/40 hover:bg-coral/15"
-        >
-          준비 중
-        </button>
-      );
+  async function submit() {
+    setSubmitState('loading');
+    setSubmitError('');
+    try {
+      const response = await fetch(`${API_BASE}/risk/assess`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listing_name: form.listingName.trim(),
+          deposit_krw: toKrw(form.depositKrw),
+          market_price_krw: marketPriceKrw,
+          registry_type: registryType === 'land' ? 'unknown' : registryType,
+          mortgage_total_krw: mortgageTotalKrw,
+          registry_owner_name: registryOwnerName,
+          contract_owner_name: form.contractOwnerName.trim(),
+          critical_terms: criticalTerms,
+          building_type: form.buildingType.trim(),
+          detail_use: form.detailUse.trim(),
+          has_illegal_building: form.hasIllegalBuilding === 'true',
+          recent_jeonse_count: Number(form.recentJeonseCount) || 0,
+          senior_deposit_krw: toKrw(form.seniorDepositKrw),
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message =
+          typeof payload.detail === 'string' ? payload.detail : `분석 실패 (${response.status})`;
+        throw new Error(message);
+      }
+      setResult(payload);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : '위험도 분석에 실패했습니다.');
+    } finally {
+      setSubmitState('idle');
     }
-
-    return (
-      <>
-        <input
-          ref={registryInputRef}
-          type="file"
-          accept="application/pdf,.pdf"
-          className="sr-only"
-          onChange={handleRegistryFileChange}
-        />
-        <button
-          type="button"
-          onClick={() => registryInputRef.current?.click()}
-          disabled={isRegistryUploading}
-          className="inline-flex min-w-36 items-center justify-center rounded-full border border-coral/25 bg-coral/10 px-5 py-3 text-sm font-semibold text-ink transition hover:border-coral/40 hover:bg-coral/15 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {isRegistryUploading ? '분석 중' : 'PDF 선택'}
-        </button>
-      </>
-    );
   }
 
-  function renderUploadState(section) {
-    if (section.title !== '등기부등본') {
-      return (
-        <div className="mt-5 rounded-[1.5rem] border border-dashed border-coral/25 bg-sand px-5 py-8 text-sm text-slate-500">
-          이후 단계에서 연결할 문서 영역입니다.
-        </div>
-      );
-    }
+  function restart() {
+    setStepIndex(0);
+    setForm(INITIAL_FORM);
+    setRegistry(null);
+    setRegistryFileName('');
+    setRegistryStatus('idle');
+    setRegistryError('');
+    setResult(null);
+    setSubmitError('');
+    setPlaceQuery('');
+    setPlaces([]);
+    setSelectedPlace(null);
+    setLookup(null);
+    setUnitDong('');
+    setUnitKey('');
+    setLookupError('');
+  }
 
-    return (
-      <div className="mt-5 rounded-[1.5rem] border border-dashed border-coral/25 bg-sand px-5 py-6">
-        <div className="flex flex-col gap-2 text-sm text-slate-600">
-          <span>{registryFileName || '등기사항증명서 PDF를 선택하세요.'}</span>
-          {isRegistryUploading && <span className="font-medium text-ink">업로드 후 채권최고액 추출 중</span>}
-          {registryError && <span className="font-medium text-red-600">{registryError}</span>}
-        </div>
-
-        {registryParseResult && (
-          <div className="mt-5 rounded-2xl border border-sage/20 bg-white p-5">
-            <p className="text-xs font-semibold tracking-[0.16em] text-sage uppercase">Parsed Result</p>
-            <div className="mt-3 text-3xl font-semibold tracking-[-0.03em] text-ink">
-              {formatKrw(registryParseResult.max_claim_amount_krw)}
-            </div>
-            <p className="mt-2 text-sm leading-6 text-slate-600">{registryParseResult.message}</p>
-            {registryParseResult.max_claim_amounts?.length > 0 && (
-              <div className="mt-4 space-y-2">
-                {registryParseResult.max_claim_amounts.map((item, index) => (
-                  <div
-                    key={`${item.amount_krw}-${index}`}
-                    className="flex flex-col gap-1 rounded-xl bg-sand px-4 py-3 text-sm text-slate-700 md:flex-row md:items-center md:justify-between"
-                  >
-                    <span>{item.raw_text}</span>
-                    <span className="font-semibold text-ink">{formatKrw(item.amount_krw)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {registryParseResult.inspection?.findings?.length > 0 && (
-              <div className="mt-5 border-t border-sage/10 pt-5">
-                <p className="text-sm font-semibold text-ink">특이사항</p>
-                <div className="mt-3 space-y-3">
-                  {registryParseResult.inspection.findings.map((finding, index) => (
-                    <div key={`${finding.title}-${index}`} className="rounded-xl bg-sand px-4 py-3">
-                      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                        <p className="font-semibold text-ink">{finding.title}</p>
-                        <span className="w-fit rounded-full bg-white px-3 py-1 text-xs font-semibold text-sage">
-                          {finding.severity}
-                        </span>
-                      </div>
-                      <p className="mt-2 text-sm leading-6 text-slate-700">{finding.explanation}</p>
-                      {finding.recommended_action && (
-                        <p className="mt-2 text-sm font-medium leading-6 text-ink">{finding.recommended_action}</p>
-                      )}
-                      {finding.evidence && (
-                        <p className="mt-2 text-xs leading-5 text-slate-500">근거: {finding.evidence}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
+  if (result) {
+    return <ResultView result={result} onRestart={restart} />;
   }
 
   return (
-    <main className="mx-auto w-full max-w-7xl px-6 pb-20 pt-6 lg:px-10 lg:pb-24 lg:pt-10">
-      <section className="grid gap-8 lg:grid-cols-[1.15fr_0.85fr]">
-        <div>
-          <div className="inline-flex rounded-full border border-sage/20 bg-white/80 px-4 py-2 text-sm text-slate-600 shadow-sm">
-            새 분석 시작
-          </div>
-          <h1 className="mt-6 text-5xl font-semibold tracking-[-0.04em] text-slate-900">
-            문서를 먼저 올리고
-            <span className="block text-sage">위험 검토 흐름을 준비합니다.</span>
-          </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-            이 화면은 실제 업로드 경험을 염두에 둔 시작 페이지입니다. 현재 단계에서는 UI만 먼저
-            구성하고, 이후 백엔드 연결 시 업로드 상태와 분석 요청 생성으로 확장합니다.
-          </p>
+    <main className="mx-auto w-full max-w-3xl px-6 pb-20 pt-6 lg:px-10 lg:pb-24 lg:pt-10">
+      <ol className="flex flex-wrap gap-2">
+        {STEPS.map((item, index) => (
+          <li
+            key={item.id}
+            className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+              index === stepIndex
+                ? 'bg-ink text-white'
+                : index < stepIndex
+                  ? 'bg-sage/20 text-ink'
+                  : 'bg-sand text-slate-400'
+            }`}
+          >
+            {item.id}
+          </li>
+        ))}
+      </ol>
+
+      <section className="mt-6 rounded-[2rem] border border-coral/15 bg-white p-6 shadow-sm lg:p-8">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="rounded-full bg-coral/10 px-3 py-1 text-xs font-semibold text-coral">
+            {step.id} · {SOURCE_LABEL[step.source]}
+          </span>
+          <span className="text-xs text-slate-400">
+            {stepIndex + 1} / {STEPS.length}
+          </span>
         </div>
+        <h1 className="mt-4 text-3xl font-semibold tracking-[-0.03em] text-slate-900">{step.title}</h1>
+        <p className="mt-3 text-sm leading-6 text-slate-600">{step.criterion}</p>
 
-        <aside className="rounded-[2rem] border border-white/80 bg-white/85 p-6 shadow-soft">
-          <p className="text-sm font-semibold tracking-[0.18em] text-coral uppercase">Quick Checklist</p>
-          <ol className="mt-5 space-y-3">
-            {checklist.map((item, index) => (
-              <li key={item} className="flex gap-3 rounded-2xl bg-sand p-4 text-sm leading-6 text-slate-700">
-                <span className="font-semibold text-coral">{index + 1}.</span>
-                <span>{item}</span>
-              </li>
-            ))}
-          </ol>
-        </aside>
-      </section>
-
-      <section className="mt-12 grid gap-8 lg:grid-cols-[1fr_320px]">
-        <div className="space-y-6">
-          {uploadSections.map((section) => (
-            <article key={section.title} className="rounded-[2rem] border border-coral/15 bg-white p-6 shadow-sm">
-              <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
-                <div className="max-w-xl">
-                  <p className="text-sm font-semibold tracking-[0.18em] text-coral uppercase">Upload Zone</p>
-                  <h2 className="mt-3 text-2xl font-semibold tracking-[-0.03em] text-slate-900">
-                    {section.title}
-                  </h2>
-                  <p className="mt-3 text-base leading-7 text-slate-600">{section.description}</p>
+        <div className="mt-8 space-y-6">
+          {step.id === 'R1' && (
+            <>
+              <Field
+                label="① 주소 검색"
+                hint="지번·도로명은 바로 확정되고, 건물명은 후보 목록에서 고릅니다."
+              >
+                <div className="mt-2 flex gap-2">
+                  <select
+                    className={`${inputClass} mt-0 w-40 shrink-0`}
+                    value={propertyType}
+                    onChange={(event) => {
+                      setPropertyType(event.target.value);
+                      resetLookup();
+                    }}
+                  >
+                    {PROPERTY_TYPES.map((type) => (
+                      <option key={type.value} value={type.value}>{type.label}</option>
+                    ))}
+                  </select>
+                  <input
+                    className={`${inputClass} mt-0`}
+                    value={placeQuery}
+                    onChange={(event) => setPlaceQuery(event.target.value)}
+                    onKeyDown={(event) => event.key === 'Enter' && searchPlaces()}
+                    placeholder="예) 경기도 수원시 권선구 탑동 814-2"
+                  />
+                  <button
+                    type="button"
+                    onClick={searchPlaces}
+                    disabled={lookupState !== 'idle'}
+                    className="mt-0 shrink-0 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-medium text-white disabled:opacity-40"
+                  >
+                    {lookupState === 'searching' ? '검색 중' : '검색'}
+                  </button>
                 </div>
-                {renderUploadAction(section)}
+              </Field>
+
+              {places.length > 0 && (
+                <ul className="space-y-2">
+                  {places.map((place) => {
+                    const active = selectedPlace?.title === place.title && selectedPlace?.address === place.address;
+                    return (
+                      <li key={`${place.title}-${place.address}`}>
+                        <button
+                          type="button"
+                          onClick={() => selectPlace(place)}
+                          className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
+                            active ? 'border-sage bg-sage/10' : 'border-coral/20 bg-white hover:border-sage/50'
+                          }`}
+                        >
+                          <span className="block text-sm font-medium text-slate-900">{place.title}</span>
+                          <span className="mt-1 block text-xs text-slate-500">
+                            {place.address || place.roadAddress}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+
+              {lookupError && (
+                <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{lookupError}</p>
+              )}
+
+              {lookupState === 'loading' && (
+                <p className="text-sm text-slate-500">건물·공시가격을 조회하는 중입니다…</p>
+              )}
+
+              {lookup && (
+                <div className="rounded-2xl border border-coral/20 bg-white p-4">
+                  <span className="text-xs font-medium uppercase tracking-wide text-slate-400">② 건물 확정</span>
+                  <p className="mt-2 text-base font-semibold text-slate-900">
+                    {lookup.building?.selected?.building_name || form.listingName || '건축물대장 정보 없음'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {lookup.building?.selected?.lot_address || lookup.query}
+                  </p>
+                  {lookup.official_price?.pnu && (
+                    <p className="mt-1 text-xs text-slate-400">PNU {lookup.official_price.pnu}</p>
+                  )}
+                </div>
+              )}
+
+              {lookup && units.length > 0 && !hasTradePrice && (
+                <Field
+                  label="③ 세대 선택"
+                  hint="공시가격은 세대마다 다릅니다. 파크뷰는 같은 건물에서도 27% 차이가 납니다."
+                >
+                  <div className="mt-2 flex gap-2">
+                    {dongList.length > 1 && (
+                      <select
+                        className={`${inputClass} mt-0 w-32 shrink-0`}
+                        value={unitDong}
+                        onChange={(event) => {
+                          setUnitDong(event.target.value);
+                          setUnitKey('');
+                        }}
+                      >
+                        <option value="" disabled>동</option>
+                        {dongList.map((dong) => (
+                          <option key={dong} value={dong}>{dong}동</option>
+                        ))}
+                      </select>
+                    )}
+                    <select
+                      className={`${inputClass} mt-0`}
+                      value={unitKey}
+                      onChange={(event) => setUnitKey(event.target.value)}
+                    >
+                      <option value="" disabled>호수를 선택하세요</option>
+                      {units
+                        .filter((unit) => dongList.length <= 1 || unit.dong === unitDong)
+                        .map((unit) => (
+                          <option key={`${unit.dong}/${unit.ho}`} value={`${unit.dong}/${unit.ho}`}>
+                            {unit.ho}호 · {unit.floor}층 · {unit.area_m2}㎡
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </Field>
+              )}
+
+              {lookup && units.length === 0 && !hasTradePrice && (
+                <p className="rounded-2xl bg-slate-100 px-4 py-3 text-sm leading-6 text-slate-600">
+                  이 건물은 매매 실거래가도, 공시가격도 없습니다. 고시원·사무소처럼 주택이 아닌 건물은
+                  공시가격 부여 대상이 아닙니다. 시세를 확인할 수 없어 전세가율·근저당 비율은
+                  <strong className="font-semibold"> 판단 불가</strong>로 처리되고, R8(선순위 보증금)로 평가합니다.
+                </p>
+              )}
+
+              {lookup?.official_price?.truncated && !selectedUnit && (
+                <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  세대가 너무 많아 목록이 잘렸습니다. 동을 먼저 고르면 정확히 좁혀집니다.
+                </p>
+              )}
+
+              {lookup && (
+                <div className="rounded-2xl border border-coral/20 bg-cream/40 p-4">
+                  <span className="text-sm text-slate-600">주택 시세</span>
+                  <p className="mt-1 text-2xl font-semibold tracking-[-0.02em] text-slate-900">
+                    {marketPriceKrw > 0 ? formatKrw(marketPriceKrw) : '확인 불가'}
+                  </p>
+                  <p className="mt-2 text-xs text-slate-500">
+                    근거 · {PRICE_SOURCE_LABEL[priceSource]}
+                    {selectedUnit && priceSource === 'official-price-x140' &&
+                      ` (${selectedUnit.stdr_year}년 ${formatKrw(selectedUnit.official_price_krw)})`}
+                  </p>
+                </div>
+              )}
+
+              <Field label="내 보증금 (원)" hint="계약 전이라 어디에도 기록이 없는 값이라 직접 입력받습니다.">
+                <input
+                  className={inputClass}
+                  inputMode="numeric"
+                  value={form.depositKrw}
+                  onChange={(event) => update('depositKrw', event.target.value)}
+                  placeholder="44000000"
+                />
+              </Field>
+            </>
+          )}
+
+          {step.id === 'R2' && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                className="sr-only"
+                onChange={handleRegistryUpload}
+              />
+              <div className="rounded-[1.5rem] border border-dashed border-coral/25 bg-sand px-5 py-8 text-center">
+                <p className="text-sm text-slate-600">
+                  {registryFileName || '등기사항전부증명서 PDF를 업로드하세요.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={registryStatus === 'uploading'}
+                  className="mt-4 rounded-full border border-coral/25 bg-white px-5 py-3 text-sm font-semibold text-ink transition hover:border-coral/40 disabled:opacity-60"
+                >
+                  {registryStatus === 'uploading' ? '분석 중…' : 'PDF 선택'}
+                </button>
+                <p className="mt-3 text-xs leading-5 text-slate-500">
+                  이 한 번의 업로드로 R2 채권최고액, R3 소유자명, R4 권리침해 등기를 함께 추출합니다.
+                </p>
+                {registryError && <p className="mt-3 text-sm font-medium text-red-600">{registryError}</p>}
               </div>
-              {renderUploadState(section)}
-            </article>
-          ))}
+
+              {inspection && (
+                <dl className="space-y-2 rounded-2xl border border-sage/20 bg-white p-5 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-slate-500">등기 유형</dt>
+                    <dd className="font-semibold text-ink">
+                      {REGISTRY_TYPE_LABEL[registryType] ?? registryType}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-slate-500">유효 채권최고액 합계</dt>
+                    <dd className="font-semibold text-ink">{formatKrw(mortgageTotalKrw)}</dd>
+                  </div>
+                  {registryType === 'general_building' && (
+                    <p className="pt-2 text-xs leading-5 text-amber-700">
+                      일반건물은 건물 전체가 하나의 등기라 호실 시세가 없습니다. 근저당 비율(R2)은
+                      판단 불가로 처리되고, 대신 R8 선순위 보증금으로 평가합니다.
+                    </p>
+                  )}
+                </dl>
+              )}
+            </>
+          )}
+
+          {step.id === 'R3' && (
+            <>
+              <div className="rounded-2xl bg-sand px-5 py-4 text-sm">
+                <span className="text-slate-500">등기부상 소유자</span>
+                <p className="mt-1 text-lg font-semibold text-ink">
+                  {registryOwnerName || '등기부 미제출 — 판단 불가'}
+                </p>
+              </div>
+              <Field label="계약서상 임대인명" hint="공동소유라면 계약 당사자 전원을 쉼표로 구분해 입력하세요.">
+                <input
+                  className={inputClass}
+                  value={form.contractOwnerName}
+                  onChange={(event) => update('contractOwnerName', event.target.value)}
+                  placeholder="예) 홍길동, 김영희"
+                />
+              </Field>
+            </>
+          )}
+
+          {step.id === 'R4' && (
+            <div className="rounded-2xl border border-sage/20 bg-white p-5">
+              {!inspection && <p className="text-sm text-slate-500">등기부가 제출되지 않아 판단할 수 없습니다.</p>}
+              {inspection && criticalTerms.length === 0 && (
+                <p className="text-sm text-emerald-700">
+                  말소되지 않은 압류·가압류·가처분·가등기·경매·신탁 등기가 발견되지 않았습니다.
+                </p>
+              )}
+              {criticalTerms.map((term, index) => (
+                <div key={`${term.term}-${index}`} className="mb-3 rounded-xl bg-sand px-4 py-3 last:mb-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-semibold text-ink">{term.term}</p>
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                      {term.is_cancelled === true ? '말소됨' : '유효'}
+                    </span>
+                  </div>
+                  {term.warning && <p className="mt-2 text-sm leading-6 text-slate-700">{term.warning}</p>}
+                  {term.evidence && <p className="mt-2 text-xs leading-5 text-slate-500">근거: {term.evidence}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {step.id === 'R5' && (
+            <>
+              <Field label="건축물 주용도" hint="원래는 건축물대장 API에서 자동으로 채워지는 값입니다.">
+                <input
+                  className={inputClass}
+                  value={form.buildingType}
+                  onChange={(event) => update('buildingType', event.target.value)}
+                  placeholder="예) 공동주택"
+                />
+              </Field>
+              <Field label="기타용도 (상세)">
+                <input
+                  className={inputClass}
+                  value={form.detailUse}
+                  onChange={(event) => update('detailUse', event.target.value)}
+                  placeholder="예) 다세대주택 / 제2종근린생활시설(고시원)"
+                />
+              </Field>
+            </>
+          )}
+
+          {step.id === 'R6' && (
+            <Field label="건축물대장에 위반건축물 표시가 있습니까?" hint="원래는 건축물대장 API의 위반건축물 필드로 자동 판정됩니다.">
+              <select
+                className={inputClass}
+                value={form.hasIllegalBuilding}
+                onChange={(event) => update('hasIllegalBuilding', event.target.value)}
+              >
+                <option value="false">없음</option>
+                <option value="true">있음</option>
+              </select>
+            </Field>
+          )}
+
+          {step.id === 'R7' && (
+            <Field
+              label="동일 건물 최근 12개월 순수 전세 거래 건수"
+              hint="원래는 실거래가 API로 자동 집계됩니다. 세대수 대비 정규화 전이라 참고 신호로만 쓰입니다."
+            >
+              <input
+                className={inputClass}
+                inputMode="numeric"
+                value={form.recentJeonseCount}
+                onChange={(event) => update('recentJeonseCount', event.target.value)}
+              />
+            </Field>
+          )}
+
+          {step.id === 'R8' && (
+            <>
+              {registryType !== 'general_building' && (
+                <p className="rounded-2xl bg-sand px-5 py-4 text-sm leading-6 text-slate-600">
+                  등기 유형이 {REGISTRY_TYPE_LABEL[registryType] ?? registryType}이라 선순위 보증금 문제가
+                  발생하지 않습니다. 이 항목은 통과 처리됩니다.
+                </p>
+              )}
+              <Field
+                label="나보다 앞선 임차인들의 보증금 합계 (원)"
+                hint="전입세대 열람원과 확정일자 부여현황으로 확인합니다. API가 없어 직접 입력해야 합니다."
+              >
+                <input
+                  className={inputClass}
+                  inputMode="numeric"
+                  value={form.seniorDepositKrw}
+                  onChange={(event) => update('seniorDepositKrw', event.target.value)}
+                />
+              </Field>
+            </>
+          )}
         </div>
 
-        <aside className="h-fit rounded-[2rem] border border-coral/15 bg-white p-6 shadow-sm">
-          <p className="text-sm font-semibold tracking-[0.18em] text-coral uppercase">Draft Inputs</p>
-          <div className="mt-5 space-y-4">
-            <div>
-              <label className="text-sm font-medium text-slate-700">매물 주소</label>
-              <div className="mt-2 rounded-2xl border border-coral/15 bg-sand px-4 py-3 text-sm text-slate-400">
-                서울시 강남구 예시로 00
-              </div>
-            </div>
-            <div>
-              <label className="text-sm font-medium text-slate-700">보증금</label>
-              <div className="mt-2 rounded-2xl border border-coral/15 bg-sand px-4 py-3 text-sm text-slate-400">
-                000,000,000원
-              </div>
-            </div>
-            <div>
-              <label className="text-sm font-medium text-slate-700">계약 예정일</label>
-              <div className="mt-2 rounded-2xl border border-coral/15 bg-sand px-4 py-3 text-sm text-slate-400">
-                YYYY.MM.DD
-              </div>
-            </div>
-          </div>
-          <button className="mt-8 w-full rounded-full bg-ink px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#0f523d]">
-            분석 준비 시작
+        {submitError && <p className="mt-6 text-sm font-medium text-red-600">{submitError}</p>}
+
+        <div className="mt-10 flex items-center justify-between gap-4">
+          <button
+            type="button"
+            onClick={() => setStepIndex((index) => Math.max(0, index - 1))}
+            disabled={stepIndex === 0}
+            className="rounded-full border border-coral/20 px-5 py-3 text-sm font-semibold text-slate-600 transition hover:border-coral/40 disabled:opacity-40"
+          >
+            이전
           </button>
-        </aside>
+          <button
+            type="button"
+            onClick={() => (isLastStep ? submit() : setStepIndex((index) => index + 1))}
+            disabled={!canProceed() || submitState === 'loading'}
+            className="rounded-full bg-ink px-8 py-3 text-sm font-semibold text-white transition hover:bg-[#0f523d] disabled:opacity-40"
+          >
+            {isLastStep ? (submitState === 'loading' ? '분석 중…' : '분석 실행') : '다음'}
+          </button>
+        </div>
       </section>
+    </main>
+  );
+}
+
+function ResultView({ result, onRestart }) {
+  const unknownChecks = result.checks.filter((check) => check.status === 'unknown');
+  // 데이터가 없어 규칙이 돌지 못한 것을 낮은 점수로 위장하지 않는다.
+  const insufficient = result.summary?.overall_status === 'unknown';
+  const grade = insufficient
+    ? { label: '데이터 부족', tone: 'text-slate-700 bg-slate-100 border-slate-300' }
+    : (GRADE_META[result.risk_grade] ?? GRADE_META.safe);
+
+  return (
+    <main className="mx-auto w-full max-w-3xl px-6 pb-20 pt-6 lg:px-10 lg:pb-24 lg:pt-10">
+      <section className={`rounded-[2rem] border p-8 ${grade.tone}`}>
+        <p className="text-sm font-semibold tracking-[0.18em] uppercase">Risk Assessment</p>
+        <div className="mt-4 flex items-end gap-4">
+          <span className="text-6xl font-semibold tracking-[-0.04em]">{result.risk_score}</span>
+          <span className="pb-2 text-2xl font-semibold">{grade.label}</span>
+        </div>
+        {unknownChecks.length > 0 && (
+          <p className="mt-4 text-sm leading-6">
+            {unknownChecks.length}개 항목을 데이터 부족으로 판정하지 못했습니다. 이 점수는 남은 항목만
+            반영한 값이므로 실제 위험은 더 높을 수 있습니다.
+          </p>
+        )}
+        {result.override_reasons?.length > 0 && (
+          <ul className="mt-6 space-y-2 border-t border-current/20 pt-5 text-sm leading-6">
+            {result.override_reasons.map((reason) => (
+              <li key={reason}>• {reason}</li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="mt-8 space-y-3">
+        {result.checks.map((check) => {
+          const status = STATUS_META[check.status] ?? STATUS_META.unknown;
+          return (
+            <article key={check.code} className="rounded-2xl border border-coral/15 bg-white p-5">
+              <div className="flex items-start justify-between gap-4">
+                <h2 className="font-semibold text-slate-900">{check.title}</h2>
+                <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${status.tone}`}>
+                  {status.label}
+                </span>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-slate-600">{check.reason}</p>
+            </article>
+          );
+        })}
+      </section>
+
+      {result.llm_explanation && (
+        <section className="mt-8 rounded-[2rem] border border-sage/20 bg-white p-6">
+          <p className="text-sm font-semibold tracking-[0.18em] text-sage uppercase">설명</p>
+          <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-700">{result.llm_explanation}</p>
+        </section>
+      )}
+
+      <button
+        type="button"
+        onClick={onRestart}
+        className="mt-8 w-full rounded-full bg-ink px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#0f523d]"
+      >
+        새 분석 시작
+      </button>
     </main>
   );
 }
