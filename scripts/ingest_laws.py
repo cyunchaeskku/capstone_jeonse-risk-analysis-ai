@@ -257,20 +257,24 @@ def _parse_batch_output(text: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def upsert_law(session, meta: dict) -> int:
+    law_id = meta.get("law_id")
+    if not law_id:
+        raise ValueError(f"법령ID(law_id) 없음: {meta}")
+
     stmt = (
         pg_insert(Law)
         .values(
             mst=meta["mst"],
-            law_id=meta.get("law_id") or None,
+            law_id=law_id,
             name=meta["name"],
             category=meta.get("category"),
             promulgation_date=meta.get("promulgation_date"),
             enforcement_date=meta.get("enforcement_date"),
         )
         .on_conflict_do_update(
-            index_elements=["mst"],
+            index_elements=["law_id"],
             set_={
-                "law_id": meta.get("law_id") or None,
+                "mst": meta["mst"],
                 "name": meta["name"],
                 "category": meta.get("category"),
                 "promulgation_date": meta.get("promulgation_date"),

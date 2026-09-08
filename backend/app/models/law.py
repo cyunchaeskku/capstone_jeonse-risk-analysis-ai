@@ -19,7 +19,7 @@ class Law(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     mst: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
-    law_id: Mapped[str | None] = mapped_column(String(10))
+    law_id: Mapped[str] = mapped_column(String(10), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     # 법률 / 대통령령 / 부령 / 조례 / 규칙
     category: Mapped[str | None] = mapped_column(String(30))
