@@ -81,7 +81,8 @@ const INITIAL_FORM = {
   detailUse: '',
   illegalBuildingStatus: 'unclear',
   recentJeonseCount: '',
-  seniorDepositKrw: '0',
+  seniorDepositKnown: false,
+  seniorDepositKrw: '',
 };
 
 const PROPERTY_TYPES = [
@@ -436,6 +437,9 @@ function AnalysisNewPage() {
       // 시세는 0이어도 넘어간다. 확인 불가는 unknown으로 정직하게 판정되는 게 맞다.
       return Boolean(lookup) && toKrw(form.depositKrw) > 0;
     }
+    if (step.id === 'R8' && registryType === 'general_building' && form.seniorDepositKnown) {
+      return form.seniorDepositKrw.trim() !== '';
+    }
     return true;
   }
 
@@ -464,7 +468,7 @@ function AnalysisNewPage() {
           recent_jeonse_peak_12m_count: r7PeakCount,
           households: r7Households,
           recent_jeonse_data_status: rentLookupStatus,
-          senior_deposit_krw: toKrw(form.seniorDepositKrw),
+          senior_deposit_krw: form.seniorDepositKnown ? toKrw(form.seniorDepositKrw) : null,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -1139,21 +1143,54 @@ function AnalysisNewPage() {
             <>
               {registryType !== 'general_building' && (
                 <p className="rounded-2xl bg-sand px-5 py-4 text-sm leading-6 text-slate-600">
-                  등기 유형이 {REGISTRY_TYPE_LABEL[registryType] ?? registryType}이라 선순위 보증금 문제가
-                  발생하지 않습니다. 이 항목은 통과 처리됩니다.
+                  등기 유형이 {REGISTRY_TYPE_LABEL[registryType] ?? registryType}이라 R8 적용 대상이 아닙니다.
                 </p>
               )}
-              <Field
-                label="나보다 앞선 임차인들의 보증금 합계 (원)"
-                hint="전입세대 열람원과 확정일자 부여현황으로 확인합니다. API가 없어 직접 입력해야 합니다."
-              >
-                <input
-                  className={inputClass}
-                  inputMode="numeric"
-                  value={form.seniorDepositKrw}
-                  onChange={(event) => update('seniorDepositKrw', event.target.value)}
-                />
-              </Field>
+              {registryType === 'general_building' && (
+                <fieldset>
+                  <legend className="text-sm font-medium text-slate-700">선순위 보증금 확인 여부</legend>
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <label className="flex items-center gap-2 rounded-full border border-coral/20 px-4 py-3 text-sm text-slate-700">
+                      <input
+                        type="radio"
+                        name="seniorDepositKnown"
+                        checked={!form.seniorDepositKnown}
+                        onChange={() => update('seniorDepositKnown', false)}
+                      />
+                      확인하지 못함
+                    </label>
+                    <label className="flex items-center gap-2 rounded-full border border-coral/20 px-4 py-3 text-sm text-slate-700">
+                      <input
+                        type="radio"
+                        name="seniorDepositKnown"
+                        checked={form.seniorDepositKnown}
+                        onChange={() => update('seniorDepositKnown', true)}
+                      />
+                      금액을 확인함
+                    </label>
+                  </div>
+                  {form.seniorDepositKnown && (
+                    <div className="mt-5">
+                      <Field
+                        label="나보다 앞선 임차인들의 보증금 합계 (원)"
+                        hint="전입세대확인서와 확정일자 부여현황에서 확인한 금액만 입력하세요. 실제로 없으면 0원을 입력합니다."
+                      >
+                        <input
+                          className={inputClass}
+                          inputMode="numeric"
+                          value={form.seniorDepositKrw}
+                          onChange={(event) => update('seniorDepositKrw', formatKrwInput(event.target.value))}
+                        />
+                      </Field>
+                    </div>
+                  )}
+                  {!form.seniorDepositKnown && (
+                    <p className="mt-3 text-xs leading-5 text-slate-500">
+                      확인하지 못한 경우 R8은 판단 불가로 처리됩니다.
+                    </p>
+                  )}
+                </fieldset>
+              )}
             </>
           )}
         </div>
@@ -1233,7 +1270,7 @@ function ResultView({ result, onRestart }) {
 
       {result.llm_explanation && (
         <section className="mt-8 rounded-[2rem] border border-sage/20 bg-white p-6">
-          <p className="text-sm font-semibold tracking-[0.18em] text-sage uppercase">설명</p>
+          <p className="text-sm font-semibold tracking-[0.18em] text-sage uppercase">AI 분석 결과</p>
           <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-700">{result.llm_explanation}</p>
         </section>
       )}

@@ -80,6 +80,14 @@
   - `explanation`
   - `references`
 
+### `POST /risk/assess`
+
+- 목적: R1~R8 마법사 입력을 deterministic 규칙으로 판정한다
+- R8 입력:
+  - `senior_deposit_krw`: 확인한 선순위 보증금 합계. 확인하지 못했으면 `null`, 실제로 없음을 확인했으면 `0`
+- R8 응답:
+  - 일반건물에서 `senior_deposit_krw`가 `null`이면 `senior_deposit` 검사는 `unknown`
+
 ### `POST /qa`
 
 - 목적: 법률 및 판례 기반 질문을 처리한다

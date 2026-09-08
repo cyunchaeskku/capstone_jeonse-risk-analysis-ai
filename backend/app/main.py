@@ -1965,7 +1965,7 @@ def _run_jeonse_concentration_check(
 
 
 def _run_senior_deposit_check(
-    senior_deposit_krw: int,
+    senior_deposit_krw: int | None,
     mortgage_total_krw: int,
     deposit_krw: int,
     market_price_krw: int,
@@ -1995,6 +1995,14 @@ def _run_senior_deposit_check(
             title=title,
             status="pass",
             reason="집합건물은 호실별로 등기가 분리되어 선순위 보증금 문제가 발생하지 않습니다.",
+            evidence=evidence,
+        )
+    if senior_deposit_krw is None:
+        return ListingCheckResult(
+            code="senior_deposit",
+            title=title,
+            status="unknown",
+            reason="선순위 보증금 합계를 확인하지 못해 부담률을 계산할 수 없습니다.",
             evidence=evidence,
         )
     if market_price_krw <= 0:

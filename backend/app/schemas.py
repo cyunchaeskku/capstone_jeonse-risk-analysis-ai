@@ -192,7 +192,9 @@ class RiskAssessRequest(BaseModel):
     recent_jeonse_data_status: Literal["complete", "partial", "unavailable", "manual"] = Field(
         ..., description="R7 전월세 데이터 조회 상태. 실제 0건과 조회 실패를 구분한다"
     )
-    senior_deposit_krw: int = Field(..., ge=0, description="선순위 보증금 합계 (R8)")
+    senior_deposit_krw: int | None = Field(
+        ..., ge=0, description="선순위 보증금 합계 (R8). 확인하지 못했으면 null"
+    )
 
 
 class RiskAssessResponse(BaseModel):
