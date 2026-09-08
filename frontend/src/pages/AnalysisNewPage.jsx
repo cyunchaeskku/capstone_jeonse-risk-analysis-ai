@@ -132,6 +132,11 @@ function formatKrw(value) {
   return `${Number(value).toLocaleString('ko-KR')}원`;
 }
 
+function formatKrwInput(value) {
+  const digits = String(value).replace(/[^0-9]/g, '');
+  return digits ? Number(digits).toLocaleString('ko-KR') : '';
+}
+
 function activeMortgageItems(inspection) {
   const mortgages = inspection?.rights_section?.mortgages ?? [];
   // is_cancelled가 null이면 말소 여부 불확실 → 보수적으로 유효로 간주한다.
@@ -151,6 +156,36 @@ function Field({ label, hint, children }) {
       {children}
       {hint && <span className="mt-2 block text-xs leading-5 text-slate-500">{hint}</span>}
     </label>
+  );
+}
+
+function OfficialPriceTooltip() {
+  return (
+    <span className="group relative ml-1 inline-flex align-middle">
+      <button
+        type="button"
+        aria-label="공시가격 140% 산정 근거"
+        className="flex h-4 w-4 items-center justify-center rounded-full border border-slate-400 text-[10px] font-semibold text-slate-500"
+      >
+        ?
+      </button>
+      <span
+        role="tooltip"
+        className="invisible pointer-events-none absolute left-0 top-full z-10 w-72 rounded-xl bg-slate-800 p-3 text-xs font-normal leading-5 text-white opacity-0 shadow-lg transition group-hover:visible group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:visible group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+      >
+        <span className="block font-semibold">공시가격 × 140%를 주택가격으로 잡은 이유</span>
+        <span className="mt-1 block">HUG 주택가격 산정기준을 따릅니다.</span>
+        <span className="mt-1 block text-slate-200">“국토교통부장관이 공시하는 공동주택가격의 140%에 해당하는 금액”</span>
+        <a
+          href="https://www.khug.or.kr/hug/web/ig/dr/igdr000001.jsp"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 inline-block underline underline-offset-2"
+        >
+          HUG 주택가격 산정기준 ↗
+        </a>
+      </span>
+    </span>
   );
 }
 
@@ -496,7 +531,7 @@ function AnalysisNewPage() {
               >
                 <div className="mt-2 flex gap-2">
                   <select
-                    className={`${inputClass} mt-0 w-40 shrink-0`}
+                    className={`${inputClass} mt-0 basis-40 shrink-0`}
                     value={propertyType}
                     onChange={(event) => {
                       setPropertyType(event.target.value);
@@ -508,7 +543,7 @@ function AnalysisNewPage() {
                     ))}
                   </select>
                   <input
-                    className={`${inputClass} mt-0`}
+                    className={`${inputClass} mt-0 min-w-0 flex-1`}
                     value={placeQuery}
                     onChange={(event) => setPlaceQuery(event.target.value)}
                     onKeyDown={(event) => event.key === 'Enter' && searchPlaces()}
@@ -627,14 +662,19 @@ function AnalysisNewPage() {
 
               {lookup && (
                 <div className="rounded-2xl border border-coral/20 bg-cream/40 p-4">
-                  <span className="text-sm text-slate-600">주택 시세</span>
+                  <span className="text-sm text-slate-600">
+                    {priceSource === 'official-price-x140' ? '추정 주택 시세' : '주택 시세'}
+                  </span>
                   <p className="mt-1 text-2xl font-semibold tracking-[-0.02em] text-slate-900">
-                    {marketPriceKrw > 0 ? formatKrw(marketPriceKrw) : '확인 불가'}
+                    {marketPriceKrw > 0
+                      ? formatKrw(marketPriceKrw)
+                      : (units.length > 0 ? '호수를 선택해주세요' : '확인 불가')}
                   </p>
                   <p className="mt-2 text-xs text-slate-500">
                     근거 · {PRICE_SOURCE_LABEL[priceSource]}
                     {selectedUnit && priceSource === 'official-price-x140' &&
                       ` (${selectedUnit.stdr_year}년 ${formatKrw(selectedUnit.official_price_krw)})`}
+                    {priceSource === 'official-price-x140' && <OfficialPriceTooltip />}
                   </p>
                 </div>
               )}
@@ -644,8 +684,8 @@ function AnalysisNewPage() {
                   className={inputClass}
                   inputMode="numeric"
                   value={form.depositKrw}
-                  onChange={(event) => update('depositKrw', event.target.value)}
-                  placeholder="44000000"
+                  onChange={(event) => update('depositKrw', formatKrwInput(event.target.value))}
+                  placeholder="44,000,000"
                 />
               </Field>
             </>
