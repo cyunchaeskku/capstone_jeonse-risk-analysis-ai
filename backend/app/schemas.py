@@ -186,7 +186,12 @@ class RiskAssessRequest(BaseModel):
         ...,
         description="건축물대장 위반건축물 표시 (R6). 확인하지 못했으면 unclear",
     )
-    recent_jeonse_count: int = Field(..., ge=0, description="동일 건물 최근 12개월 순수 전세 거래 건수 (R7)")
+    recent_jeonse_count: int = Field(..., ge=0, description="동일 건물 최근 3년 순수 전세 거래 건수 (R7)")
+    recent_jeonse_peak_12m_count: int = Field(..., ge=0, description="최근 3년 중 가장 집중된 12개월의 신규 전세 건수 (R7)")
+    households: int = Field(..., ge=0, description="건축물대장 총 세대수. 0이면 미확보 (R7)")
+    recent_jeonse_data_status: Literal["complete", "partial", "unavailable", "manual"] = Field(
+        ..., description="R7 전월세 데이터 조회 상태. 실제 0건과 조회 실패를 구분한다"
+    )
     senior_deposit_krw: int = Field(..., ge=0, description="선순위 보증금 합계 (R8)")
 
 

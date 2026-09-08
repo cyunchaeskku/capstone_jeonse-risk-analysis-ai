@@ -3,7 +3,7 @@ import { useMemo, useRef, useState } from 'react';
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
 // docs/전세사기위험도판별핵심로직.md §3 규칙 카탈로그를 그대로 단계로 옮긴 것.
-// source: B = 등기부 PDF 업로드, C = 사용자 수기 입력.
+// source: A = 공공 데이터 자동 조회, B = 등기부 PDF 업로드, C = 사용자 수기 입력.
 // R9(보증보험)는 공식 API가 없어 이 흐름에서 제외한다.
 const STEPS = [
   {
@@ -23,9 +23,9 @@ const STEPS = [
   {
     id: 'R3',
     source: 'C',
-    title: '소유자 일치',
+    title: '계약 상대방 확인',
     code: 'owner_mismatch',
-    criterion: '계약서상 임대인 ≠ 등기부 소유자 → 위험 (공동소유는 전원 포함)',
+    criterion: '계약하려는 임대인과 등기부 소유자가 같은지 확인합니다.',
   },
   {
     id: 'R4',
@@ -36,7 +36,7 @@ const STEPS = [
   },
   {
     id: 'R5',
-    source: 'C',
+    source: 'A',
     title: '건축물 용도',
     code: 'residential_use',
     criterion: '주용도에 주거 관련 용도가 없으면 위험',
@@ -50,10 +50,10 @@ const STEPS = [
   },
   {
     id: 'R7',
-    source: 'C',
-    title: '중복 계약 집중도',
+    source: 'A',
+    title: '전세 거래 집중도',
     code: 'duplicate_contract',
-    criterion: '동일 건물 최근 12개월 순수 전세 5건 이상 → 주의',
+    criterion: '동일 건물의 최근 12개월 순수 전세가 5건 이상이면 추가 확인 필요',
   },
   {
     id: 'R8',
@@ -65,19 +65,22 @@ const STEPS = [
 ];
 
 const SOURCE_LABEL = {
+  A: '자동 조회',
   B: '등기부 PDF 업로드',
   C: '직접 입력',
 };
+
+const RESIDENTIAL_USE_KEYWORDS = ['공동주택', '단독주택', '다가구', '다세대', '연립', '주택', '오피스텔'];
 
 // 원래는 공공 API(출처 A)에서 채워야 하는 값이라 임시 기본값을 둔다.
 const INITIAL_FORM = {
   listingName: '',
   depositKrw: '',
   contractOwnerName: '',
-  buildingType: '공동주택',
-  detailUse: '다세대주택',
+  buildingType: '',
+  detailUse: '',
   illegalBuildingStatus: 'unclear',
-  recentJeonseCount: '2',
+  recentJeonseCount: '',
   seniorDepositKrw: '0',
 };
 
@@ -247,9 +250,18 @@ function AnalysisNewPage() {
 
   // R5·R7은 R1에서 이미 받아온 건축물대장·실거래가로 채워진다. 다시 묻지 않는다.
   const selectedBuilding = lookup?.building?.selected ?? null;
-  const autoJeonseCount = (lookup?.rent?.items ?? []).filter(
-    (item) => toKrw(item?.monthlyRent) === 0,
-  ).length;
+  const residentialUseText = `${form.buildingType} ${form.detailUse}`.trim();
+  const isResidentialUse = residentialUseText
+    ? RESIDENTIAL_USE_KEYWORDS.some((keyword) => residentialUseText.includes(keyword))
+    : null;
+  const rentLookupStatus = lookup?.rent?.lookup_status ?? (lookup ? 'unavailable' : 'manual');
+  const r7Concentration = lookup?.rent?.concentration ?? null;
+  const r7PeakCount = r7Concentration?.peak_12m_count ?? (Number(form.recentJeonseCount) || 0);
+  const r7Households = Number(r7Concentration?.households ?? selectedBuilding?.households) || 0;
+  const r7PeakRatio = r7Households > 0 ? r7PeakCount / r7Households : null;
+  const r7DataAvailable = lookup ? rentLookupStatus === 'complete' : Boolean(form.recentJeonseCount.trim());
+  const r7CanEvaluate = r7DataAvailable && registryType === 'general_building' && r7PeakRatio !== null;
+  const r7Warn = r7CanEvaluate && r7PeakCount >= 3 && r7PeakRatio >= 0.3;
 
   // 다른 건물의 대장을 올렸는지 지번으로 대조한다. 비전 모델이 주소를 지어내는 경우도 있어
   // 판독값을 그대로 믿지 않고 R1 조회 결과와 맞춰 본다.
@@ -447,7 +459,11 @@ function AnalysisNewPage() {
           building_type: form.buildingType.trim(),
           detail_use: form.detailUse.trim(),
           illegal_building_status: form.illegalBuildingStatus,
-          recent_jeonse_count: Number(form.recentJeonseCount) || 0,
+          recent_jeonse_count:
+            r7Concentration?.total_pure_jeonse_36m ?? (Number(form.recentJeonseCount) || 0),
+          recent_jeonse_peak_12m_count: r7PeakCount,
+          households: r7Households,
+          recent_jeonse_data_status: rentLookupStatus,
           senior_deposit_krw: toKrw(form.seniorDepositKrw),
         }),
       });
@@ -513,7 +529,11 @@ function AnalysisNewPage() {
       <section className="mt-6 rounded-[2rem] border border-coral/15 bg-white p-6 shadow-sm lg:p-8">
         <div className="flex flex-wrap items-center gap-3">
           <span className="rounded-full bg-coral/10 px-3 py-1 text-xs font-semibold text-coral">
-            {step.id} · {SOURCE_LABEL[step.source]}
+            {step.id} · {step.id === 'R4'
+              ? '자동 확인'
+              : ((step.id === 'R5' && !selectedBuilding) || (step.id === 'R7' && !lookup)
+                ? '직접 입력'
+                : SOURCE_LABEL[step.source])}
           </span>
           <span className="text-xs text-slate-400">
             {stepIndex + 1} / {STEPS.length}
@@ -715,6 +735,20 @@ function AnalysisNewPage() {
                 <p className="mt-3 text-xs leading-5 text-slate-500">
                   이 한 번의 업로드로 R2 채권최고액, R3 소유자명, R4 권리침해 등기를 함께 추출합니다.
                 </p>
+                <div className="mt-5 border-t border-coral/15 pt-4">
+                  <p className="text-sm font-semibold text-ink">등기사항전부증명서가 없나요?</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    대한민국 법원 인터넷등기소에서 열람·발급할 수 있습니다.
+                  </p>
+                  <a
+                    href="https://www.iros.go.kr/index.jsp"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-3 inline-flex rounded-full border border-coral/25 bg-white px-4 py-2 text-xs font-semibold text-ink transition hover:border-coral/40"
+                  >
+                    인터넷등기소에서 발급하기 ↗
+                  </a>
+                </div>
                 {registryError && <p className="mt-3 text-sm font-medium text-red-600">{registryError}</p>}
               </div>
 
@@ -733,13 +767,13 @@ function AnalysisNewPage() {
                   {sharedPropertyCount > 1 && (
                     <>
                       <div className="flex justify-between gap-4">
-                        <dt className="text-slate-500">이 호실 부담분 (공동담보 배분)</dt>
+                        <dt className="text-slate-500">이 호실의 예상 대출 부담액</dt>
                         <dd className="font-semibold text-ink">{formatKrw(allocatedMortgageKrw)}</dd>
                       </div>
                       <p className="pt-2 text-xs leading-5 text-amber-700">
-                        이 근저당은 공동담보목록상 {sharedPropertyCount}건에 함께 걸려 있습니다. 민법
-                        제368조 제1항에 따라 배분한 금액으로 R2를 판정합니다. 다만 이 호실만 먼저 경매에
-                        넘어가는 이시배당에서는 원문 전액이 부담될 수 있습니다.
+                        이 호실은 다른 여러 부동산과 함께 대출 담보로 잡혀 있습니다. 위 금액은 전체 대출
+                        부담을 여러 부동산에 나눠 계산한 참고값입니다. 실제 경매에서는 이 호실이 부담하는
+                        금액이 더 커질 수 있습니다.
                       </p>
                     </>
                   )}
@@ -762,7 +796,10 @@ function AnalysisNewPage() {
                   {registryOwnerName || '등기부 미제출 — 판단 불가'}
                 </p>
               </div>
-              <Field label="계약서상 임대인명" hint="공동소유라면 계약 당사자 전원을 쉼표로 구분해 입력하세요.">
+              <Field
+                label="계약 예정 임대인명"
+                hint="중개사나 계약서 초안에서 안내받은 이름을 입력하세요. 공동소유라면 전원을 쉼표로 구분하세요. 아직 모르면 비워 두고 넘어갈 수 있으며, 소유자 일치는 ‘확인 불가’로 표시됩니다."
+              >
                 <input
                   className={inputClass}
                   value={form.contractOwnerName}
@@ -774,12 +811,26 @@ function AnalysisNewPage() {
           )}
 
           {step.id === 'R4' && (
-            <div className="rounded-2xl border border-sage/20 bg-white p-5">
+            <div className="space-y-4">
+              <p className="rounded-2xl bg-slate-50 px-5 py-4 text-sm leading-6 text-slate-600">
+                R2에서 업로드한 등기부를 자동으로 확인한 결과입니다. 이 단계에서 추가로 입력할 내용은 없습니다.
+              </p>
               {!inspection && <p className="text-sm text-slate-500">등기부가 제출되지 않아 판단할 수 없습니다.</p>}
               {inspection && criticalTerms.length === 0 && (
-                <p className="text-sm text-emerald-700">
-                  말소되지 않은 압류·가압류·가처분·가등기·경매·신탁 등기가 발견되지 않았습니다.
-                </p>
+                <div className="flex gap-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-lg font-bold text-white">
+                    ✓
+                  </span>
+                  <div>
+                    <p className="font-semibold text-emerald-900">권리침해 등기가 확인되지 않았습니다</p>
+                    <p className="mt-1 text-sm leading-6 text-emerald-800">
+                      말소되지 않은 압류·가압류·가처분·가등기·경매·신탁 항목이 발견되지 않았습니다.
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-emerald-900">
+                      다음 단계로 넘어가도 됩니다.
+                    </p>
+                  </div>
+                </div>
               )}
               {criticalTerms.map((term, index) => (
                 <div key={`${term.term}-${index}`} className="mb-3 rounded-xl bg-sand px-4 py-3 last:mb-0">
@@ -799,17 +850,22 @@ function AnalysisNewPage() {
           {step.id === 'R5' && (
             <>
               {selectedBuilding ? (
-                <div className="rounded-2xl border border-coral/20 bg-cream/40 p-4">
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
-                    건축물대장 자동 조회
-                  </span>
-                  <p className="mt-2 text-sm text-slate-600">주용도</p>
-                  <p className="text-lg font-semibold text-slate-900">{form.buildingType || '-'}</p>
-                  <p className="mt-3 text-sm text-slate-600">기타용도</p>
-                  <p className="text-lg font-semibold text-slate-900">{form.detailUse || '-'}</p>
-                  <p className="mt-3 text-xs text-slate-500">
-                    R1에서 조회한 {selectedBuilding.building_name} 건축물대장에서 가져온 값입니다.
+                <div className="space-y-4">
+                  <p className="rounded-2xl bg-slate-50 px-5 py-4 text-sm leading-6 text-slate-600">
+                    R1에서 조회한 건축물대장 정보를 자동으로 가져왔습니다. 이 단계에서 추가로 입력할 내용은 없습니다.
                   </p>
+                  <div className="rounded-2xl border border-coral/20 bg-cream/40 p-4">
+                    <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                      건축물대장 자동 조회
+                    </span>
+                    <p className="mt-2 text-sm text-slate-600">주용도</p>
+                    <p className="text-lg font-semibold text-slate-900">{form.buildingType || '-'}</p>
+                    <p className="mt-3 text-sm text-slate-600">기타용도</p>
+                    <p className="text-lg font-semibold text-slate-900">{form.detailUse || '-'}</p>
+                    <p className="mt-3 text-xs text-slate-500">
+                      R1에서 조회한 {selectedBuilding.building_name} 건축물대장에서 가져온 값입니다.
+                    </p>
+                  </div>
                 </div>
               ) : (
                 <>
@@ -830,6 +886,30 @@ function AnalysisNewPage() {
                     />
                   </Field>
                 </>
+              )}
+
+              {isResidentialUse === true && (
+                <div className="flex gap-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-lg font-bold text-white">
+                    ✓
+                  </span>
+                  <div>
+                    <p className="font-semibold text-emerald-900">주거 관련 용도가 확인되었습니다</p>
+                    <p className="mt-1 text-sm leading-6 text-emerald-800">
+                      주용도 또는 기타용도에 주거 관련 용도가 포함되어 있어 R5 기준을 통과합니다.
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-emerald-900">다음 단계로 넘어가도 됩니다.</p>
+                  </div>
+                </div>
+              )}
+
+              {isResidentialUse === false && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-5">
+                  <p className="font-semibold text-red-900">주거용 건물로 확인되지 않습니다</p>
+                  <p className="mt-1 text-sm leading-6 text-red-800">
+                    입력된 건축물 용도에서 주거 관련 용어를 찾지 못했습니다. 계약 전에 실제 용도를 확인하세요.
+                  </p>
+                </div>
               )}
             </>
           )}
@@ -860,6 +940,20 @@ function AnalysisNewPage() {
                 {ledgerFileName && (
                   <p className="mt-3 text-xs text-slate-500">{ledgerFileName}</p>
                 )}
+                <div className="mt-5 border-t border-coral/15 pt-4">
+                  <p className="text-sm font-semibold text-ink">건축물대장이 없나요?</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    정부24에서 건축물대장 등본(초본)을 발급·열람할 수 있습니다.
+                  </p>
+                  <a
+                    href="https://www.gov.kr/mw/AA020InfoCappView.do?CappBizCD=15000000098"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-3 inline-flex rounded-full border border-coral/25 bg-white px-4 py-2 text-xs font-semibold text-ink transition hover:border-coral/40"
+                  >
+                    정부24에서 발급하기 ↗
+                  </a>
+                </div>
               </div>
 
               {ledgerError && (
@@ -948,20 +1042,41 @@ function AnalysisNewPage() {
                   <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
                     실거래가 자동 집계
                   </span>
-                  <p className="mt-2 text-sm text-slate-600">최근 12개월 순수 전세 거래</p>
-                  <p className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">
-                    {autoJeonseCount}건
-                  </p>
+                  <p className="mt-2 text-sm text-slate-600">최근 3년 중 가장 집중된 12개월</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-3">
+                    <p className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">
+                      {r7PeakCount}건
+                    </p>
+                    {registryType === 'aggregate_building' && r7DataAvailable && (
+                      <span className="rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
+                        참고 정보
+                      </span>
+                    )}
+                    {r7CanEvaluate && !r7Warn && (
+                      <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+                        ✓ 거래 집중 신호 없음
+                      </span>
+                    )}
+                    {r7Warn && (
+                      <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                        ⚠ 거래 집중 주의
+                      </span>
+                    )}
+                    {(!r7DataAvailable || (registryType !== 'aggregate_building' && !r7CanEvaluate)) && (
+                      <span className="rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
+                        판단 불가
+                      </span>
+                    )}
+                  </div>
                   <p className="mt-2 text-xs text-slate-500">
-                    전월세 {lookup.rent?.total ?? 0}건 중 월세 0원인 순수 전세만 센 값입니다.
-                    {selectedBuilding?.households
-                      ? ` 이 건물은 ${selectedBuilding.households}세대입니다.`
-                      : ''}
+                    최근 3년 순수 전세 {r7Concentration?.total_pure_jeonse_36m ?? 0}건 중 갱신계약
+                    {' '}{r7Concentration?.renewal_count ?? 0}건을 집중도 계산에서 제외했습니다.
+                    {r7Households > 0 ? ` 이 건물은 총 ${r7Households}세대입니다.` : ''}
                   </p>
                 </div>
               ) : (
                 <Field
-                  label="동일 건물 최근 12개월 순수 전세 거래 건수"
+                  label="최근 3년 중 가장 집중된 12개월의 신규 전세 거래 건수"
                   hint="실거래가가 조회되지 않아 직접 입력합니다."
                 >
                   <input
@@ -972,6 +1087,51 @@ function AnalysisNewPage() {
                   />
                 </Field>
               )}
+
+              {registryType === 'aggregate_building' && r7DataAvailable && (
+                <p className="rounded-2xl bg-slate-100 px-5 py-4 text-sm leading-6 text-slate-600">
+                  이 건물은 호실마다 소유자가 다를 수 있는 집합건물입니다. 건물 전체 거래량만으로 같은
+                  임대인의 중복 계약 위험을 판단하기 어려워 R7 점수에는 반영하지 않고 참고 정보로만 보여줍니다.
+                </p>
+              )}
+
+              {r7CanEvaluate && !r7Warn && (
+                <div className="flex gap-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-lg font-bold text-white">
+                    ✓
+                  </span>
+                  <div>
+                    <p className="font-semibold text-emerald-900">전세 거래 집중 신호가 없습니다</p>
+                    <p className="mt-1 text-sm leading-6 text-emerald-800">
+                      가장 집중된 12개월의 신규 전세가 {r7PeakCount}건으로, 전체 {r7Households}세대의
+                      {' '}{Math.round(r7PeakRatio * 100)}%입니다.
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-emerald-900">다음 단계로 넘어가도 됩니다.</p>
+                  </div>
+                </div>
+              )}
+
+              {r7Warn && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-5">
+                  <p className="font-semibold text-amber-900">짧은 기간에 전세 거래가 집중되었습니다</p>
+                  <p className="mt-1 text-sm leading-6 text-amber-800">
+                    가장 집중된 12개월의 신규 전세가 {r7PeakCount}건으로, 전체 {r7Households}세대의
+                    {' '}{Math.round(r7PeakRatio * 100)}%입니다. 여러 세입자의 보증금이 짧은 기간에 같은
+                    소유자에게 모일 수 있어 계약 현황을 추가로 확인해야 합니다.
+                  </p>
+                </div>
+              )}
+
+              {(!r7DataAvailable || (registryType !== 'aggregate_building' && !r7CanEvaluate)) && (
+                <p className="rounded-2xl bg-slate-100 px-5 py-4 text-sm leading-6 text-slate-600">
+                  전월세 거래 데이터, 총 세대수 또는 등기 유형이 부족해 거래 집중도를 판단할 수 없습니다.
+                </p>
+              )}
+
+              <p className="rounded-2xl bg-slate-50 px-5 py-4 text-sm leading-6 text-slate-600">
+                일반건물에서 최근 3년 중 어느 12개월에 신규 전세가 3건 이상이고 전체 세대의 30% 이상이면
+                여러 세입자의 보증금이 짧은 기간에 같은 소유자에게 모일 수 있어 주의 신호로 봅니다.
+              </p>
             </>
           )}
 

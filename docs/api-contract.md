@@ -164,7 +164,7 @@
 - 응답 필드:
   - `location`
   - `building`
-  - `rent`
+  - `rent` (`lookup_status`: `complete` / `partial` / `unavailable`, 최근 3년 `concentration` 포함)
   - `market_price`
 
 ## 공통 응답 규칙

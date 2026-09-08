@@ -873,9 +873,11 @@ async def search_listing_for_checks(
         else:
             building_candidates = []
 
-        # 3. 실거래가 조회 (전세/매매 병렬 조회)
+        # 3. 실거래가 조회 (전월세 3년 / 매매 1년 병렬 조회)
         deal_from, deal_to = _recent_12m_period()
-        months = _iter_months(deal_from, deal_to)
+        rent_deal_from, _ = _recent_36m_period()
+        rent_months = _iter_months(rent_deal_from, deal_to)
+        trade_months = _iter_months(deal_from, deal_to)
         
         # 전세 API 설정
         r_svc, r_method, r_bld_f, r_area_f = _PROPERTY_TYPE_MAP[property_type]
@@ -891,33 +893,19 @@ async def search_listing_for_checks(
 
         rent_tasks = [
             _fetch_month(client, r_svc, r_method, r_bld_f, r_area_f, sigungu_cd, ymd, "", target_search_name, diagnostics=rent_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun, debug_dong=target_dong)
-            for ymd in months
+            for ymd in rent_months
         ]
         trade_tasks = [
             _fetch_month(client, t_svc, t_method, t_bld_f, t_area_f, sigungu_cd, ymd, "", target_search_name, t_price_f, trade_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun, debug_dong=target_dong)
-            for ymd in months
+            for ymd in trade_months
         ]
 
         results = await asyncio.gather(*(rent_tasks + trade_tasks))
         
         # 전세/월세 데이터 처리
-        all_rent_items = [item for month_items in results[:len(months)] for item in month_items]
+        all_rent_items = [item for month_items in results[:len(rent_months)] for item in month_items]
         # 매매 데이터 처리 (시세용)
-        trade_items = [item for month_items in results[len(months):] for item in month_items]
-
-        rent_deal_from = deal_from
-        if property_type == "rh":
-            for _ in range(9):
-                if all_rent_items:
-                    break
-                fallback_from, fallback_to = _previous_12m_period(rent_deal_from)
-                fallback_months = _iter_months(fallback_from, fallback_to)
-                fallback_results = await asyncio.gather(*(
-                    _fetch_month(client, r_svc, r_method, r_bld_f, r_area_f, sigungu_cd, ymd, "", target_search_name, diagnostics=rent_diagnostics, rh_dong=rh_dong, rh_jibun=rh_jibun, debug_dong=target_dong)
-                    for ymd in fallback_months
-                ))
-                all_rent_items = [item for month_items in fallback_results for item in month_items]
-                rent_deal_from = fallback_from
+        trade_items = [item for month_items in results[len(rent_months):] for item in month_items]
 
         needs_trade_fallback = property_type == "rh" and not trade_items
         if needs_trade_fallback:
@@ -1003,6 +991,21 @@ async def search_listing_for_checks(
                 trade_diagnostics.get("request_error_count", 0),
             )
 
+    rent_request_count = rent_diagnostics.get("request_count", 0)
+    rent_success_count = rent_diagnostics.get("success_count", 0)
+    rent_lookup_status = (
+        "complete"
+        if rent_request_count > 0 and rent_success_count == rent_request_count
+        else ("partial" if rent_success_count > 0 else "unavailable")
+    )
+    selected_building = building_candidates[0] if building_candidates else None
+    concentration = _calculate_jeonse_concentration(
+        all_rent_items,
+        _to_int((selected_building or {}).get("households")),
+        rent_deal_from,
+        deal_to,
+    )
+
     return {
         "query": query.strip(),
         "property_type": property_type,
@@ -1014,12 +1017,14 @@ async def search_listing_for_checks(
         "building": {
             "total_count": total_count,
             "matched_count": len(building_candidates),
-            "selected": building_candidates[0] if building_candidates else None,
+            "selected": selected_building,
             "candidates": building_candidates,
         },
         "rent": {
             "deal_from": rent_deal_from,
             "deal_to": deal_to,
+            "lookup_status": rent_lookup_status,
+            "concentration": concentration,
             "total": len(all_rent_items),
             "items": sorted(all_rent_items, key=_extract_ymd, reverse=True),
         },
@@ -1169,6 +1174,14 @@ def _recent_12m_period() -> tuple[str, str]:
     return start, end
 
 
+def _recent_36m_period() -> tuple[str, str]:
+    today = date.today()
+    end = f"{today.year}{today.month:02d}"
+    start_index = today.year * 12 + today.month - 36
+    start_year, start_month_index = divmod(start_index, 12)
+    return f"{start_year}{start_month_index + 1:02d}", end
+
+
 def _previous_12m_period(start: str) -> tuple[str, str]:
     year, month = int(start[:4]), int(start[4:])
     end_year, end_month = (year, month - 1) if month > 1 else (year - 1, 12)
@@ -1281,9 +1294,53 @@ def _compute_risk_score(checks: list[ListingCheckResult]) -> int:
     return min(score, 100)
 
 
+def _calculate_jeonse_concentration(
+    transactions: list[dict],
+    households: int,
+    period_from: str,
+    period_to: str,
+) -> dict[str, Any]:
+    pure_jeonse = [item for item in transactions if _to_int(item.get("monthlyRent")) == 0]
+    renewals = [item for item in pure_jeonse if str(item.get("contractType") or "").strip() == "갱신"]
+    eligible = [item for item in pure_jeonse if str(item.get("contractType") or "").strip() != "갱신"]
+
+    months = _iter_months(period_from, period_to)
+    eligible_months = [
+        f"{_to_int(item.get('dealYear')):04d}{_to_int(item.get('dealMonth')):02d}"
+        for item in eligible
+        if _to_int(item.get("dealYear")) > 0 and _to_int(item.get("dealMonth")) > 0
+    ]
+    peak_count = 0
+    peak_from = months[-12] if len(months) >= 12 else period_from
+    peak_to = months[-1] if months else period_to
+    for index in range(max(1, len(months) - 11)):
+        window = months[index:index + 12]
+        if not window:
+            continue
+        count = sum(window[0] <= month <= window[-1] for month in eligible_months)
+        if count >= peak_count:
+            peak_count = count
+            peak_from, peak_to = window[0], window[-1]
+
+    ratio = peak_count / households if households > 0 else None
+    return {
+        "total_pure_jeonse_36m": len(pure_jeonse),
+        "eligible_contract_count": len(eligible),
+        "renewal_count": len(renewals),
+        "peak_12m_count": peak_count,
+        "peak_period_from": peak_from,
+        "peak_period_to": peak_to,
+        "households": households,
+        "peak_ratio": ratio,
+        "threshold_count": 3,
+        "threshold_ratio": 0.3,
+    }
+
+
 def _run_duplicate_contract_check(
     listing_name: str,
     recent_transactions: list[dict],
+    data_available: bool | None = None,
 ) -> ListingCheckResult:
     jeonse_only = [
         t for t in recent_transactions
@@ -1292,12 +1349,12 @@ def _run_duplicate_contract_check(
     count = len(jeonse_only)
     threshold = 5
 
-    if count == 0:
+    if data_available is False or (count == 0 and data_available is not True):
         return ListingCheckResult(
             code="duplicate_contract",
-            title="동일 건물 전세 거래 집중 여부",
+            title="전세 거래 집중도",
             status="unknown",
-            reason="최근 전세 거래 데이터가 없어 중복 계약 여부를 판단할 수 없습니다.",
+            reason="최근 전세 거래 데이터를 정상적으로 조회하지 못해 거래 집중도를 판단할 수 없습니다.",
             evidence={"transaction_count": count},
         )
 
@@ -1309,7 +1366,7 @@ def _run_duplicate_contract_check(
     )
     return ListingCheckResult(
         code="duplicate_contract",
-        title="동일 건물 전세 거래 집중 여부",
+        title="전세 거래 집중도",
         status=status,
         reason=reason,
         evidence={"transaction_count": count, "threshold": threshold},
@@ -1393,7 +1450,7 @@ async def _generate_listing_check_explanation(
 
 
 def _iter_months(start: str, end: str) -> list[str]:
-    """'202511' ~ '202601' 사이의 YYYYMM 목록 반환 (최대 24개월)"""
+    """'202511' ~ '202601' 사이의 YYYYMM 목록 반환."""
     sy, sm = int(start[:4]), int(start[4:])
     ey, em = int(end[:4]), int(end[4:])
     months = []
@@ -1404,8 +1461,6 @@ def _iter_months(start: str, end: str) -> list[str]:
         if m > 12:
             m = 1
             y += 1
-        if len(months) >= 24:
-            break
     return months
 
 
@@ -1441,6 +1496,8 @@ async def _fetch_month(
     rh_jibun: str = "",
     debug_dong: str = "",
 ) -> list[dict]:
+    if diagnostics is not None:
+        diagnostics["request_count"] = diagnostics.get("request_count", 0) + 1
     url = (
         f"https://apis.data.go.kr/1613000/{svc_name}/{method_name}"
         f"?serviceKey={settings.data_go_kr_api_key}"
@@ -1498,6 +1555,8 @@ async def _fetch_month(
                 "result_message": root.findtext(".//resultMsg"),
             })
         return []
+    if diagnostics is not None:
+        diagnostics["success_count"] = diagnostics.get("success_count", 0) + 1
     items = root.findall(".//item")
     if diagnostics is not None:
         diagnostics["api_item_count"] = diagnostics.get("api_item_count", 0) + len(items)
@@ -1856,9 +1915,53 @@ def _run_illegal_building_check(status: str) -> ListingCheckResult:
     )
 
 
-def _run_duplicate_contract_count_check(count: int) -> ListingCheckResult:
-    """R7. 동일 건물 최근 12개월 순수 전세 거래 건수. 세대수 정규화 전까지는 참고 신호."""
-    return _run_duplicate_contract_check("", [{"monthlyRent": 0} for _ in range(count)])
+def _run_jeonse_concentration_check(
+    total_count: int,
+    peak_12m_count: int,
+    households: int,
+    data_status: str,
+    registry_type: str,
+) -> ListingCheckResult:
+    """R7. 최근 3년 중 가장 집중된 12개월의 신규 전세를 세대수 대비로 본다."""
+    ratio = peak_12m_count / households if households > 0 else None
+    evidence = {
+        "total_pure_jeonse_36m": total_count,
+        "peak_12m_count": peak_12m_count,
+        "households": households,
+        "peak_ratio": ratio,
+        "threshold_count": 3,
+        "threshold_ratio": 0.3,
+    }
+    if registry_type != "general_building":
+        return ListingCheckResult(
+            code="duplicate_contract",
+            title="전세 거래 집중도",
+            status="unknown",
+            reason="집합건물은 호실별 소유자가 다를 수 있어 건물 전체 거래량을 위험 점수에 반영하지 않고 참고 정보로만 제공합니다.",
+            evidence=evidence,
+        )
+    if data_status not in ("complete", "manual") or ratio is None:
+        return ListingCheckResult(
+            code="duplicate_contract",
+            title="전세 거래 집중도",
+            status="unknown",
+            reason="전세 거래 데이터 또는 총 세대수가 부족해 거래 집중도를 판단할 수 없습니다.",
+            evidence=evidence,
+        )
+
+    status = "warn" if peak_12m_count >= 3 and ratio >= 0.3 else "pass"
+    reason = (
+        f"최근 3년 중 가장 집중된 12개월에 {peak_12m_count}건이 신고되어 전체 {households}세대의 {ratio:.0%}입니다. 추가 확인이 필요합니다."
+        if status == "warn"
+        else f"최근 3년 중 가장 집중된 12개월의 전세 거래가 {peak_12m_count}건으로 전체 {households}세대의 {ratio:.0%}입니다. 거래 집중 신호가 없습니다."
+    )
+    return ListingCheckResult(
+        code="duplicate_contract",
+        title="전세 거래 집중도",
+        status=status,
+        reason=reason,
+        evidence=evidence,
+    )
 
 
 def _run_senior_deposit_check(
@@ -2024,7 +2127,13 @@ async def assess_risk(payload: RiskAssessRequest) -> RiskAssessResponse:
             {"building_type": payload.building_type, "detail_use": payload.detail_use}
         ),
         _run_illegal_building_check(payload.illegal_building_status),
-        _run_duplicate_contract_count_check(payload.recent_jeonse_count),
+        _run_jeonse_concentration_check(
+            payload.recent_jeonse_count,
+            payload.recent_jeonse_peak_12m_count,
+            payload.households,
+            payload.recent_jeonse_data_status,
+            payload.registry_type,
+        ),
         _run_senior_deposit_check(
             payload.senior_deposit_krw,
             payload.mortgage_total_krw,

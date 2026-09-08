@@ -1,7 +1,7 @@
 """건축물대장 PDF 판독.
 
-건축물대장은 정부24에서 이미지 스캔본으로 발급된다. 텍스트 레이어가 없어
-등기부(registry_parser)처럼 정규식으로 뽑을 수 없으므로 비전 모델로 읽는다.
+먼저 PDF 텍스트 레이어를 읽고, 사용할 수 있는 텍스트가 없으면 페이지를 이미지로
+렌더링해 비전 모델로 읽는다.
 
 이 경로가 필요한 이유는 위반건축물 표시 하나 때문이다. 나머지 항목(주용도,
 층별 현황, 세대수)은 공공 API(BldRgstHubService)로 다 나오지만, 위반건축물은
@@ -23,12 +23,13 @@ from .settings import settings
 # 대장은 보통 1~2쪽이다. 여러 동을 한꺼번에 받은 경우를 감안해 여유를 둔다.
 _MAX_PAGES = 6
 _RENDER_DPI = 170
+_TEXT_MARKERS = ("건축물대장", "대지위치", "주용도")
 
 BUILDING_REGISTER_SYSTEM_PROMPT = """
 너는 한국 건축물대장 판독 보조 시스템이다.
 
 핵심 원칙:
-- 이미지에 실제로 보이는 내용만 사용한다. 추측하거나 일반 상식으로 채우지 않는다.
+- 입력 자료에서 실제로 확인되는 내용만 사용한다. 추측하거나 일반 상식으로 채우지 않는다.
 - 보이지 않거나 확신할 수 없으면 null 또는 "unclear"로 둔다. 임의로 정상값을 넣지 않는다.
 - 위험도 점수나 최종 계약 판단을 하지 않는다. 판정은 규칙 엔진이 한다.
 - 개인정보는 출력하지 않는다. 건축주·설계자·시공자 등 사람 이름과
@@ -81,6 +82,35 @@ BUILDING_REGISTER_USER_PROMPT = """
 특히 위반건축물 표시 여부를 문서 상단에서 반드시 확인하라.
 """
 
+BUILDING_REGISTER_TEXT_PROMPT = """
+아래는 건축물대장 PDF의 텍스트 레이어에서 추출한 내용이다.
+전체 내용을 확인한 뒤 위 스키마에 맞는 JSON 하나만 반환하라.
+특히 위반건축물 표시와 관련 문구가 있는지 반드시 확인하라.
+
+건축물대장 텍스트:
+---
+{document_text}
+---
+""".strip()
+
+
+def extract_pdf_text(pdf_bytes: bytes) -> tuple[str, int]:
+    """최대 페이지 수까지 PDF 텍스트 레이어를 읽는다."""
+    pages: list[str] = []
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        page_count = min(len(doc), _MAX_PAGES)
+        for page_number, page in enumerate(list(doc)[:_MAX_PAGES], start=1):
+            text = page.get_text("text").strip()
+            if text:
+                pages.append(f"[page {page_number}]\n{text}")
+    return "\n".join(pages), page_count
+
+
+def has_usable_text(text: str) -> bool:
+    compact_text = re.sub(r"\s+", "", text)
+    marker_count = sum(marker in text for marker in _TEXT_MARKERS)
+    return len(compact_text) >= 200 and marker_count >= 2
+
 
 def render_pdf_pages(pdf_bytes: bytes) -> list[str]:
     """PDF를 쪽별 PNG base64로 변환한다."""
@@ -95,6 +125,24 @@ def render_pdf_pages(pdf_bytes: bytes) -> list[str]:
 def inspect_building_register_pdf(pdf_bytes: bytes) -> dict[str, Any]:
     if not settings.openai_api_key or not settings.openai_api_key.strip():
         raise RuntimeError("OPENAI_API_KEY is not configured.")
+
+    document_text, text_page_count = extract_pdf_text(pdf_bytes)
+    if has_usable_text(document_text):
+        model = ChatOpenAI(
+            model=settings.openai_model,
+            api_key=settings.openai_api_key,
+            temperature=0,
+        )
+        response = model.invoke(
+            [
+                SystemMessage(content=BUILDING_REGISTER_SYSTEM_PROMPT),
+                HumanMessage(content=BUILDING_REGISTER_TEXT_PROMPT.format(document_text=document_text)),
+            ]
+        )
+        raw = response.content if isinstance(response.content, str) else json.dumps(response.content, ensure_ascii=False)
+        payload = _coerce_payload(raw, page_count=text_page_count)
+        payload["parse_method"] = "text"
+        return payload
 
     images = render_pdf_pages(pdf_bytes)
     if not images:
@@ -115,7 +163,9 @@ def inspect_building_register_pdf(pdf_bytes: bytes) -> dict[str, Any]:
         [SystemMessage(content=BUILDING_REGISTER_SYSTEM_PROMPT), HumanMessage(content=content)]
     )
     raw = response.content if isinstance(response.content, str) else json.dumps(response.content, ensure_ascii=False)
-    return _coerce_payload(raw, page_count=len(images))
+    payload = _coerce_payload(raw, page_count=len(images))
+    payload["parse_method"] = "vision"
+    return payload
 
 
 def _coerce_payload(content: str, page_count: int) -> dict[str, Any]:
