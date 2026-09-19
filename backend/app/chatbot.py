@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Literal, TypedDict
 
@@ -93,6 +94,7 @@ class LegalSourceRecord(TypedDict, total=False):
     article_title: str | None
     score: float | None
     excerpt: str | None
+    content: str | None
 
 
 class QaState(TypedDict, total=False):
@@ -299,6 +301,7 @@ class ChatbotService:
                     "article_title": metadata.get("article_title"),
                     "score": float(score) if score is not None else None,
                     "excerpt": excerpt,
+                    "content": doc.page_content,
                 }
             )
 
@@ -353,6 +356,65 @@ class ChatbotService:
         return {
             "answer": answer.strip(),
             "references": references,
+            "sources": sources,
+        }
+
+    async def stream_answer_question(
+        self,
+        question: str,
+        history: list[ChatHistoryMessage],
+        analysis: AnalysisDetailResponse | None = None,
+    ) -> AsyncIterator[tuple[Literal["token", "done"], dict]]:
+        if not settings.openai_api_key or not settings.openai_api_key.strip():
+            raise RuntimeError("OPENAI_API_KEY is not configured.")
+
+        route, _ = self._classify_question(question)
+        sources: list[LegalSourceRecord] = []
+        system_prompt = SIMPLE_SYSTEM_PROMPT
+        extra_system_messages = None
+
+        if route == "legal":
+            sources = self._retrieve_legal_sources(question)
+            if not sources:
+                answer = "관련 법령 문서를 충분히 찾지 못했습니다. 질문을 조금 더 구체적으로 적어 주시면 해당 법령을 다시 찾아볼 수 있습니다."
+                yield "token", {"text": answer}
+                yield "done", {
+                    "references": [],
+                    "disclaimer": DISCLAIMER,
+                    "scope": SCOPE,
+                    "route": route,
+                    "sources": [],
+                }
+                return
+
+            system_prompt = LEGAL_SYSTEM_PROMPT
+            extra_system_messages = [f"법령 출처:\n{self._build_legal_context(sources)}"]
+
+        model = self._build_model()
+        messages = _build_messages(
+            question=question,
+            history=history,
+            analysis=analysis,
+            system_prompt=system_prompt,
+            extra_system_messages=extra_system_messages,
+        )
+
+        async for chunk in model.astream(messages):
+            text = chunk.content if isinstance(chunk.content, str) else ""
+            if text:
+                yield "token", {"text": text}
+
+        references = [source["citation_label"] for source in sources]
+        if route == "simple":
+            references = ["AI generated guidance"]
+            if analysis is not None:
+                references.append("analysis context")
+
+        yield "done", {
+            "references": references,
+            "disclaimer": DISCLAIMER,
+            "scope": SCOPE,
+            "route": route,
             "sources": sources,
         }
 

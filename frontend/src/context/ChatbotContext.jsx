@@ -38,6 +38,17 @@ function buildAssistantMessage(text, options = {}) {
   };
 }
 
+function parseSseEvent(rawEvent) {
+  const lines = rawEvent.split('\n');
+  const event = lines.find((line) => line.startsWith('event:'))?.slice(6).trim() ?? 'message';
+  const data = lines
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n');
+
+  return { event, data: JSON.parse(data) };
+}
+
 export function ChatbotProvider({ children }) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState(initialMessages);
@@ -71,6 +82,7 @@ export function ChatbotProvider({ children }) {
     setMessages((current) => [...current, userMessage]);
 
     try {
+      const assistantMessageId = `assistant-${Date.now()}`;
       const response = await fetch(`${API_BASE_URL}/qa`, {
         method: 'POST',
         headers: {
@@ -88,14 +100,58 @@ export function ChatbotProvider({ children }) {
         throw new Error(errorMessage);
       }
 
-      const data = await response.json();
-      setMessages((current) => [
-        ...current,
-        buildAssistantMessage(data.answer, {
-          references: data.references ?? [],
-          sources: data.sources ?? [],
-        }),
-      ]);
+      if (!response.body) {
+        throw new Error('스트리밍 응답을 읽을 수 없습니다.');
+      }
+
+      setMessages((current) => [...current, buildAssistantMessage('', { id: assistantMessageId })]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let answer = '';
+      let buffer = '';
+      let completed = false;
+
+      while (!completed) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+
+        const events = buffer.split('\n\n');
+        buffer = events.pop() ?? '';
+
+        for (const rawEvent of events) {
+          if (!rawEvent.trim()) {
+            continue;
+          }
+
+          const { event, data } = parseSseEvent(rawEvent);
+          if (event === 'token') {
+            answer += data.text;
+            setMessages((current) =>
+              current.map((message) => (message.id === assistantMessageId ? { ...message, text: answer } : message)),
+            );
+          }
+
+          if (event === 'done') {
+            completed = true;
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantMessageId
+                  ? { ...message, references: data.references ?? [], sources: data.sources ?? [] }
+                  : message,
+              ),
+            );
+          }
+
+          if (event === 'error') {
+            throw new Error(data.message ?? '챗봇 응답을 가져오지 못했습니다.');
+          }
+        }
+
+        if (done && !completed) {
+          throw new Error('챗봇 스트리밍 응답이 중단되었습니다.');
+        }
+      }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Unknown error');
       setMessages((current) => [

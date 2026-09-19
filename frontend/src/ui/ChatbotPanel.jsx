@@ -1,10 +1,36 @@
 import { useEffect, useRef } from 'react';
 import { useChatbot } from '../context/ChatbotContext';
 
+function SourceCard({ source, onSelectSource }) {
+  const content = (
+    <>
+      <p className="font-medium text-slate-700">{source.citation_label}</p>
+      {source.article_title ? <p className="mt-0.5 text-slate-500">{source.article_title}</p> : null}
+      {source.excerpt ? <p className="mt-1 whitespace-pre-wrap text-slate-500">{source.excerpt}</p> : null}
+    </>
+  );
+
+  if (!onSelectSource) {
+    return <div className="rounded-2xl bg-white/75 px-3 py-2 text-[11px] leading-5 text-slate-600">{content}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelectSource(source)}
+      className="w-full rounded-2xl bg-white/75 px-3 py-2 text-left text-[11px] leading-5 text-slate-600 transition hover:bg-white hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-coral/40"
+    >
+      {content}
+      <span className="mt-2 block font-medium text-coral">문서 상세 보기</span>
+    </button>
+  );
+}
+
 function ChatbotPanel({
   className = '',
   onRequestClose,
   onRequestFullscreen,
+  onSelectSource,
   showFullscreenButton = false,
   showCloseButton = false,
 }) {
@@ -16,6 +42,15 @@ function ChatbotPanel({
   }, []);
 
   const handleSubmit = (event) => {
+    event.preventDefault();
+    sendMessage();
+  };
+
+  const handleKeyDown = (event) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) {
+      return;
+    }
+
     event.preventDefault();
     sendMessage();
   };
@@ -79,15 +114,11 @@ function ChatbotPanel({
                   </p>
                   <div className="space-y-2">
                     {message.sources.map((source) => (
-                      <div key={`${source.citation_label}-${source.article_number ?? source.jo_code ?? 'source'}`} className="rounded-2xl bg-white/75 px-3 py-2 text-[11px] leading-5 text-slate-600">
-                        <p className="font-medium text-slate-700">{source.citation_label}</p>
-                        {source.article_title ? (
-                          <p className="mt-0.5 text-slate-500">{source.article_title}</p>
-                        ) : null}
-                        {source.excerpt ? (
-                          <p className="mt-1 whitespace-pre-wrap text-slate-500">{source.excerpt}</p>
-                        ) : null}
-                      </div>
+                      <SourceCard
+                        key={`${source.citation_label}-${source.article_number ?? source.jo_code ?? 'source'}`}
+                        source={source}
+                        onSelectSource={onSelectSource}
+                      />
                     ))}
                   </div>
                 </div>
@@ -116,6 +147,7 @@ function ChatbotPanel({
             rows="3"
             value={draftMessage}
             onChange={(event) => setDraftMessage(event.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="등기부등본이나 계약 전 체크포인트에 대해 질문해보세요."
             className="w-full resize-none bg-transparent px-3 py-2 text-sm leading-6 text-slate-700 outline-none placeholder:text-slate-400"
           />

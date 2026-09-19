@@ -91,18 +91,17 @@
 ### `POST /qa`
 
 - 목적: 법률 및 판례 기반 질문을 처리한다
-- 초기 구현:
-  - LangChain + OpenAI 기반 비-RAG 챗봇 응답
+- 동작:
+  - `text/event-stream` SSE 응답으로 답변 토큰을 순차 전송한다
+  - `token` 이벤트는 `{ "text": "..." }`를 전송한다
+  - `done` 이벤트는 `references`, `sources`, `disclaimer`, `scope`, `route`를 전송한다
+  - `sources[].content`는 선택한 출처의 상세 보기에 사용하는 전체 인덱스 본문이다
+  - `error` 이벤트는 `code`, `message`, `action_hint`을 전송한다
   - 백엔드는 무상태이며 최근 대화 문맥은 요청에 포함한다
 - 요청 필드:
   - `question`
   - `analysis_id`
   - `history[]`
-- 응답 필드:
-  - `answer`
-  - `references`
-  - `disclaimer`
-  - `scope`
 
 ### `GET /health`
 

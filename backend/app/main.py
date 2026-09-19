@@ -12,6 +12,7 @@ from urllib.parse import unquote
 import httpx
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
@@ -29,7 +30,6 @@ from .schemas import (
     ListingCheckResult,
     ListingCheckSummary,
     QaRequest,
-    QaResponse,
     RegistryInspectResponse,
     RegistryMaxClaimItem,
     MortgageItem,
@@ -1657,33 +1657,41 @@ async def analyze_listing_checks(payload: ListingCheckAnalyzeRequest) -> Listing
     )
 
 
-@app.post("/qa", response_model=QaResponse)
-def answer_question(payload: QaRequest) -> QaResponse:
+@app.post("/qa")
+async def answer_question(payload: QaRequest) -> StreamingResponse:
     analysis = service.get_analysis(payload.analysis_id) if payload.analysis_id else None
-    try:
-        return chatbot_service.answer_question(
-            question=payload.question,
-            history=payload.history,
-            analysis=analysis,
-        )
-    except RuntimeError as error:
+    if not settings.openai_api_key or not settings.openai_api_key.strip():
         raise HTTPException(
             status_code=503,
             detail={
                 "code": "CHATBOT_NOT_CONFIGURED",
-                "message": str(error),
+                "message": "OPENAI_API_KEY is not configured.",
                 "action_hint": "OPENAI_API_KEY를 설정한 뒤 서버를 다시 시작하세요.",
             },
-        ) from error
-    except Exception as error:
-        raise HTTPException(
-            status_code=502,
-            detail={
+        )
+
+    async def event_stream():
+        try:
+            async for event, data in chatbot_service.stream_answer_question(
+                question=payload.question,
+                history=payload.history,
+                analysis=analysis,
+            ):
+                yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        except Exception:
+            logger.exception("Chatbot stream failed")
+            error = {
                 "code": "CHATBOT_UPSTREAM_ERROR",
                 "message": "챗봇 응답 생성 중 외부 모델 호출에 실패했습니다.",
                 "action_hint": "잠시 후 다시 시도하세요.",
-            },
-        ) from error
+            }
+            yield f"event: error\ndata: {json.dumps(error, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ---------------------------------------------------------------------------

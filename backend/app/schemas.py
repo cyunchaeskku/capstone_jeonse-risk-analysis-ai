@@ -77,6 +77,7 @@ class LegalSource(BaseModel):
     article_title: str | None = None
     score: float | None = None
     excerpt: str | None = None
+    content: str | None = None
 
 
 class AnalysisDetailResponse(BaseModel):
