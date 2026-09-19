@@ -1,0 +1,15 @@
+# 허용 목록 방식: 전부 제외한 뒤 이미지에 필요한 것만 다시 포함한다.
+*
+!requirements.txt
+!backend/
+!data/address_code.csv
+# 런타임은 FAISS.load_local이 읽는 index.faiss·index.pkl만 쓴다.
+# Cloud Build의 docker는 "!vectorDB/*/index.faiss" 식 재포함을 처리하지 못해 폴더째 넣고 나머지를 뺀다.
+!vectorDB/
+vectorDB/*/documents.jsonl
+vectorDB/*/id_map.json
+vectorDB/*/manifest.json
+
+**/__pycache__
+backend/tests/
+backend/test_*.py

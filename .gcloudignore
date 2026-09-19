@@ -1,0 +1,19 @@
+# gcloud builds submit 업로드 제외 목록.
+# 이 파일이 없으면 gcloud가 .gitignore를 따라 vectorDB/를 빼버린다.
+# 이미지에 들어갈 파일은 .dockerignore가 다시 거른다.
+.git/
+.gitignore
+.env
+.venv/
+.claude/
+.serena/
+frontend/
+scripts/
+RDB/
+docs/
+img/
+src/
+prompts/
+__pycache__/
+*.jsonl
+data/*.pdf
