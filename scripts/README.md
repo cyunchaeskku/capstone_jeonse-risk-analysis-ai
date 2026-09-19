@@ -10,6 +10,8 @@
 | `make_vectorDB.py` | RDB 법령/조문 데이터를 FAISS 벡터DB로 변환 |
 | `test_nrg_trade.py` | 상업·업무용 부동산 매매 실거래가 API 단일 월 조회 |
 | `law_targets.yaml` | 수집 대상 법령 목록 (설정 파일) |
+| `collect_precedent_summaries.py` | 키워드별 판례 후보 검색과 ID별 요약 JSONL 수집 |
+| `precedent_targets.yaml` | 판례 후보 검색어와 분류 |
 
 ---
 
@@ -84,6 +86,25 @@ python scripts/ingest_laws.py --only "집합건물의 소유 및 관리에 관�
 ```
 
 법령 이름은 korean-law `search_law` 기준으로 정확하게 입력해야 한다. 약칭이 자동 변환되기도 하지만, 검색 결과 상위 항목이 원하는 법령인지 dry-run으로 먼저 확인하는 것을 권장한다.
+
+---
+
+## collect_precedent_summaries.py
+
+`precedent_targets.yaml`의 검색어를 모두 페이지 끝까지 조회하고, 판례일련번호로 중복을 제거한 뒤 `summarize_precedent` 결과를 JSONL로 저장한다. 이미 출력 파일에 저장된 ID는 다시 조회하지 않는다.
+
+```bash
+# 전체 후보 검색 및 요약 수집
+python scripts/collect_precedent_summaries.py
+
+# 특정 검색어만 확인
+python scripts/collect_precedent_summaries.py --only '임대차보증금'
+
+# 외부 API 호출 없이 검색 결과 파서 확인
+python scripts/collect_precedent_summaries.py --self-check
+```
+
+기본 출력 경로는 `data/precedent_summaries.jsonl`이다. 각 행에는 판례 메타데이터, 매칭된 검색어·분류, CLI 요약 원문이 들어간다.
 
 ---
 

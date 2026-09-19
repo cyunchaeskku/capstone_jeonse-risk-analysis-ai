@@ -51,6 +51,7 @@
 - `RDB/`: 법령 데이터용 PostgreSQL 16 Docker Compose와 Alembic migration
 - `scripts/`: 법령 수집과 FAISS 생성 스크립트
   - `ingest_laws.py`: `korean-law` CLI로 법령을 PostgreSQL에 저장
+  - `collect_precedent_summaries.py`: 키워드별 판례 후보를 검색하고 ID별 요약을 JSONL로 저장
   - `make_vectorDB.py`: PostgreSQL 법령/조문 데이터를 `vectorDB/laws_faiss`로 변환
   - `law_targets.yaml`: 수집 대상 법령 목록
 - `vectorDB/laws_faiss/`: LangChain FAISS 법령 인덱스 산출물
@@ -198,7 +199,6 @@ alembic -c RDB/alembic.ini upgrade head
 - 주요 기술 결정은 `docs/adr/`에 기록한다.
 - `docs/WORKING_CONTEXT.md`는 짧고 최신으로 유지한다.
 - 작업트리의 기존 사용자 변경을 보존한다. 관련 없는 변경을 되돌리지 않는다.
-- 토큰 절약을 위해 한국어 응답도 caveman style로 짧게 한다.
 
 ## 초기 버전 비목표
 

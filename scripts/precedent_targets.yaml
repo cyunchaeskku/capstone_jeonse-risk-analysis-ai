@@ -1,0 +1,70 @@
+queries:
+  # 형사 사건 후보
+  - keyword: 사기
+    category: criminal
+  - keyword: 특정경제범죄가중처벌등에관한법률위반(사기)
+    category: criminal
+  - keyword: 상습사기
+    category: criminal
+  - keyword: 사기미수
+    category: criminal
+  - keyword: 준사기
+    category: criminal
+  - keyword: 사기방조
+    category: criminal
+  - keyword: 공인중개사법위반
+    category: criminal
+  - keyword: 대출사기
+    category: criminal
+
+  # 민사 권리관계 후보
+  - keyword: 임대차보증금
+    category: civil
+  - keyword: 임차보증금 반환
+    category: civil
+  - keyword: 전세보증금 반환
+    category: civil
+  - keyword: 배당이의
+    category: civil
+  - keyword: 사해행위취소
+    category: civil
+  - keyword: 대항력
+    category: civil
+  - keyword: 우선변제권
+    category: civil
+  - keyword: 확정일자
+    category: civil
+  - keyword: 근저당권
+    category: civil
+  - keyword: 임차권등기
+    category: civil
+  - keyword: 주택임대차보호법
+    category: civil
+  - keyword: 소액임차인
+    category: civil
+
+  # 검색 결과 전문에서의 관련성 판정을 위한 보조 후보
+  - keyword: 전세사기
+    category: descriptor
+  - keyword: 무자본 갭투자
+    category: descriptor
+  - keyword: 깡통전세
+    category: descriptor
+  - keyword: 전세보증금 편취
+    category: descriptor
+  - keyword: 신축빌라 전세사기
+    category: descriptor
+  - keyword: 동시진행
+    category: descriptor
+  - keyword: 조직적 사기
+    category: descriptor
+  - keyword: 바지사장
+    category: descriptor
+  - keyword: 명의신탁
+    category: descriptor
+  - keyword: 부동산 신탁 사기
+    category: descriptor
+  - keyword: 중개사고
+    category: descriptor
+  - keyword: 전세보증보험 사기
+    category: descriptor

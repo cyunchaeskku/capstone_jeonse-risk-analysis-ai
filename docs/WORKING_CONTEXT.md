@@ -43,6 +43,7 @@
 - `AGENTS.md`를 현재 코드베이스 기준으로 최신화했다. 이제 React/FastAPI/RDB/scripts/vectorDB 구조, 구현된 사용자 흐름, API surface, 환경 변수, 알려진 gap을 포함한다.
 - `POST /registry/parse`를 추가해 등기사항증명서 PDF에서 `채권최고액`을 추출하는 기초 parser를 연결했다. 여러 금액이 있으면 마지막 등장 금액을 유효 후보값으로 반환한다.
 - `POST /registry/inspect`를 추가해 등기 텍스트를 LLM에 전달하고 표제부/갑구/을구 특이사항을 JSON으로 추출한다. 프론트 새 분석 탭은 이 endpoint를 호출해 채권최고액과 findings를 표시한다.
+- `scripts/collect_precedent_summaries.py`는 `precedent_targets.yaml`의 검색어별 판례 후보를 수집하고, 중복 제거한 ID의 CLI 요약을 JSONL에 축적한다. 판례 RDB·FAISS 반영과 LLM 적합성 분류는 아직 구현하지 않았다.
 
 ## Open Decisions
 
