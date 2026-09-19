@@ -82,6 +82,39 @@ uvicorn backend.app.main:app --reload
 http://localhost:8000
 ```
 
+## 배포
+
+| 대상 | 플랫폼 | URL |
+|---|---|---|
+| Frontend | Vercel | `https://capstone-jeonse-risk-analysis-ai.vercel.app` |
+| Backend | GCP Cloud Run (서울) | `https://jeonse-backend-209169324729.asia-northeast3.run.app` |
+
+### 재배포
+
+**Frontend** — `main`에 push하면 Vercel이 자동으로 빌드·배포한다.
+
+**Backend** — Cloud Build로 이미지를 빌드한 뒤 새 이미지로 배포한다. 환경 변수·Secret 설정은 유지된다.
+
+```bash
+bash scripts/redeploy_backend.sh            # 태그 = 커밋 해시
+bash scripts/redeploy_backend.sh demo-day   # 태그 직접 지정
+```
+
+기본 태그는 커밋 해시다. 커밋 안 된 변경이 있으면 `-dirty-<시각>`이 붙는다. 같은 태그로 다시 빌드하면 태그가 새 이미지로 옮겨 간다.
+
+- `vectorDB/`는 gitignore 대상이라 로컬에 있는 인덱스가 이미지에 들어간다. 인덱스를 다시 만들었으면 위 명령으로 재배포한다.
+- 빌드 업로드 대상은 `.gcloudignore`, 이미지 포함 대상은 `.dockerignore`가 정한다.
+- 패키지를 추가했으면 `.venv/bin/pip freeze`로 `requirements.txt`를 다시 고정한다.
+
+### 설정 변경
+
+| 변경 | 방법 |
+|---|---|
+| API 키 (`.env`) | `python scripts/upload_secrets.py` 후 `gcloud run services update jeonse-backend --region=asia-northeast3 --update-labels=redeploy=$(date +%s)` (Secret은 리비전 생성 시점 값을 읽으므로 새 리비전이 필요) |
+| 백엔드 환경 변수 | `gcloud run services update jeonse-backend --region=asia-northeast3 --update-env-vars=KEY=VALUE` |
+| 프론트 환경 변수 (`VITE_*`) | Vercel 대시보드에서 수정 후 Redeploy (빌드 시 주입) |
+| 프론트 도메인 변경 | 백엔드 `CORS_ORIGINS`·`VWORLD_API_DOMAIN`, 네이버 Maps Web 서비스 URL, VWorld 서비스 URL 모두 갱신 |
+
 ## 디렉터리 구조
 
 - `frontend/`: 사용자 화면

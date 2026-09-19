@@ -1,6 +1,18 @@
 import { useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+
+const analysisMarkdownComponents = {
+  h1: ({ children }) => <h1 className="mt-6 text-xl font-semibold text-slate-900 first:mt-0">{children}</h1>,
+  h2: ({ children }) => <h2 className="mt-6 text-lg font-semibold text-slate-900 first:mt-0">{children}</h2>,
+  h3: ({ children }) => <h3 className="mt-5 font-semibold text-slate-800 first:mt-0">{children}</h3>,
+  p: ({ children }) => <p className="mt-3 first:mt-0">{children}</p>,
+  ul: ({ children }) => <ul className="mt-3 list-disc space-y-1 pl-5">{children}</ul>,
+  ol: ({ children }) => <ol className="mt-3 list-decimal space-y-1 pl-5">{children}</ol>,
+  li: ({ children }) => <li>{children}</li>,
+  strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
+};
 
 // docs/전세사기위험도판별핵심로직.md §3 규칙 카탈로그를 그대로 단계로 옮긴 것.
 // source: A = 공공 데이터 자동 조회, B = 등기부 PDF 업로드, C = 사용자 수기 입력.
@@ -1220,8 +1232,70 @@ function AnalysisNewPage() {
   );
 }
 
+function ScoreGuide({ result }) {
+  const scoreMax = result.score_max ?? 100;
+  const scoreGrade = result.score_grade ?? result.risk_grade;
+  const ranges = result.score_ranges ?? [];
+  const rawScore = (result.score_breakdown ?? []).reduce((sum, item) => sum + item.added_points, 0);
+
+  return (
+    <aside className="space-y-4 lg:sticky lg:top-8">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5">
+        <p className="text-xs font-semibold tracking-[0.14em] text-sage uppercase">점수 구간</p>
+        <div className="mt-4 space-y-2 text-sm">
+          {ranges.map((range) => {
+            const rangeGrade = GRADE_META[range.grade] ?? GRADE_META.safe;
+            const isCurrentRange = range.grade === scoreGrade;
+            return (
+              <div
+                key={range.grade}
+                className={`flex items-center justify-between rounded-lg px-3 py-2 ${
+                  isCurrentRange ? 'bg-slate-100 font-semibold text-slate-900' : 'text-slate-600'
+                }`}
+              >
+                <span>{range.min_score}–{range.max_score}점</span>
+                <span className={rangeGrade.tone.split(' ')[0]}>{rangeGrade.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-600">
+        <p className="text-xs font-semibold tracking-[0.14em] text-sage uppercase">점수 합산 방식</p>
+        <ul className="mt-3 space-y-2">
+          <li>위험: 배점 전액을 더합니다.</li>
+          <li>주의: 배점의 절반을 더합니다.</li>
+          <li>통과·판단 불가: 점수를 더하지 않습니다.</li>
+        </ul>
+        {rawScore > scoreMax ? (
+          <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
+            항목 가산점 합계 {rawScore}점은 최대 {scoreMax}점으로 제한됩니다.
+          </p>
+        ) : null}
+      </section>
+
+      {result.override_reasons?.length > 0 ? (
+        <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm leading-6 text-red-800">
+          <p className="text-xs font-semibold tracking-[0.14em] uppercase">고위험 즉시 판정</p>
+          <p className="mt-2">점수 구간과 별개로 치명적 위험 신호가 있어 최종 판정이 고위험입니다.</p>
+          <ul className="mt-3 space-y-2 border-t border-red-200 pt-3 font-medium">
+            {result.override_reasons.map((reason) => (
+              <li key={reason}>• {reason}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </aside>
+  );
+}
+
 function ResultView({ result, onRestart }) {
   const unknownChecks = result.checks.filter((check) => check.status === 'unknown');
+  const scoreMax = result.score_max ?? 100;
+  const scoreGrade = result.score_grade ?? result.risk_grade;
+  const scoreRange = (result.score_ranges ?? []).find((range) => range.grade === scoreGrade);
+  const scoreBreakdown = new Map((result.score_breakdown ?? []).map((item) => [item.code, item]));
   // 데이터가 없어 규칙이 돌지 못한 것을 낮은 점수로 위장하지 않는다.
   const insufficient = result.summary?.overall_status === 'unknown';
   const grade = insufficient
@@ -1229,59 +1303,87 @@ function ResultView({ result, onRestart }) {
     : (GRADE_META[result.risk_grade] ?? GRADE_META.safe);
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-6 pb-20 pt-6 lg:px-10 lg:pb-24 lg:pt-10">
-      <section className={`rounded-[2rem] border p-8 ${grade.tone}`}>
-        <p className="text-sm font-semibold tracking-[0.18em] uppercase">Risk Assessment</p>
-        <div className="mt-4 flex items-end gap-4">
-          <span className="text-6xl font-semibold tracking-[-0.04em]">{result.risk_score}</span>
-          <span className="pb-2 text-2xl font-semibold">{grade.label}</span>
-        </div>
-        {unknownChecks.length > 0 && (
-          <p className="mt-4 text-sm leading-6">
-            {unknownChecks.length}개 항목을 데이터 부족으로 판정하지 못했습니다. 이 점수는 남은 항목만
-            반영한 값이므로 실제 위험은 더 높을 수 있습니다.
-          </p>
-        )}
-        {result.override_reasons?.length > 0 && (
-          <ul className="mt-6 space-y-2 border-t border-current/20 pt-5 text-sm leading-6">
-            {result.override_reasons.map((reason) => (
-              <li key={reason}>• {reason}</li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="mt-8 space-y-3">
-        {result.checks.map((check) => {
-          const status = STATUS_META[check.status] ?? STATUS_META.unknown;
-          return (
-            <article key={check.code} className="rounded-2xl border border-coral/15 bg-white p-5">
-              <div className="flex items-start justify-between gap-4">
-                <h2 className="font-semibold text-slate-900">{check.title}</h2>
-                <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${status.tone}`}>
-                  {status.label}
-                </span>
+    <main className="mx-auto w-full max-w-6xl px-6 pb-20 pt-6 lg:px-10 lg:pb-24 lg:pt-10">
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
+        <div>
+          <section className={`rounded-[2rem] border p-8 ${grade.tone}`}>
+            <p className="text-sm font-semibold tracking-[0.18em] uppercase">Risk Assessment</p>
+            <div className="mt-4 flex items-end gap-4">
+              <div className="flex items-baseline gap-2">
+                <span className="text-6xl font-semibold tracking-[-0.04em]">{result.risk_score}</span>
+                <span className="text-xl font-semibold">/ {scoreMax}점</span>
               </div>
-              <p className="mt-2 text-sm leading-6 text-slate-600">{check.reason}</p>
-            </article>
-          );
-        })}
-      </section>
+              <span className="pb-2 text-2xl font-semibold">{grade.label}</span>
+            </div>
+            {scoreRange ? (
+              <p className="mt-4 text-sm leading-6">
+                점수 구간: {GRADE_META[scoreGrade]?.label ?? scoreGrade} ({scoreRange.min_score}–{scoreRange.max_score}점)
+              </p>
+            ) : null}
+            {unknownChecks.length > 0 && (
+              <p className="mt-4 text-sm leading-6">
+                {unknownChecks.length}개 항목을 데이터 부족으로 판정하지 못했습니다. 이 점수는 남은 항목만
+                반영한 값이므로 실제 위험은 더 높을 수 있습니다.
+              </p>
+            )}
+            {result.override_reasons?.length > 0 && (
+              <ul className="mt-6 space-y-2 border-t border-current/20 pt-5 text-sm leading-6">
+                {result.override_reasons.map((reason) => (
+                  <li key={reason}>• {reason}</li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-      {result.llm_explanation && (
-        <section className="mt-8 rounded-[2rem] border border-sage/20 bg-white p-6">
-          <p className="text-sm font-semibold tracking-[0.18em] text-sage uppercase">AI 분석 결과</p>
-          <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-700">{result.llm_explanation}</p>
-        </section>
-      )}
+          <section className="mt-8 space-y-3">
+            {result.checks.map((check) => {
+              const status = STATUS_META[check.status] ?? STATUS_META.unknown;
+              const contribution = scoreBreakdown.get(check.code);
+              const ruleId = STEPS.find((step) => step.code === check.code)?.id;
+              const scoreLabel = contribution
+                ? check.status === 'unknown'
+                  ? `점수 미반영 / ${contribution.max_points}점`
+                  : `+${contribution.added_points} / ${contribution.max_points}점`
+                : null;
 
-      <button
-        type="button"
-        onClick={onRestart}
-        className="mt-8 w-full rounded-full bg-ink px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#0f523d]"
-      >
-        새 분석 시작
-      </button>
+              return (
+                <article key={check.code} className="rounded-2xl border border-coral/15 bg-white p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      {ruleId ? <p className="text-xs font-semibold tracking-[0.12em] text-sage">{ruleId}</p> : null}
+                      <h2 className="mt-1 font-semibold text-slate-900">{check.title}</h2>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {scoreLabel ? <span className="text-xs font-semibold text-slate-500">{scoreLabel}</span> : null}
+                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${status.tone}`}>{status.label}</span>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">{check.reason}</p>
+                </article>
+              );
+            })}
+          </section>
+
+          {result.llm_explanation && (
+            <section className="mt-8 rounded-[2rem] border border-sage/20 bg-white p-6">
+              <p className="text-sm font-semibold tracking-[0.18em] text-sage uppercase">AI 분석 결과</p>
+              <div className="mt-4 text-sm leading-7 text-slate-700">
+                <ReactMarkdown components={analysisMarkdownComponents}>{result.llm_explanation}</ReactMarkdown>
+              </div>
+            </section>
+          )}
+
+          <button
+            type="button"
+            onClick={onRestart}
+            className="mt-8 w-full rounded-full bg-ink px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#0f523d]"
+          >
+            새 분석 시작
+          </button>
+        </div>
+
+        <ScoreGuide result={result} />
+      </div>
     </main>
   );
 }

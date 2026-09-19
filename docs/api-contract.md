@@ -87,6 +87,11 @@
   - `senior_deposit_krw`: 확인한 선순위 보증금 합계. 확인하지 못했으면 `null`, 실제로 없음을 확인했으면 `0`
 - R8 응답:
   - 일반건물에서 `senior_deposit_krw`가 `null`이면 `senior_deposit` 검사는 `unknown`
+- 점수 응답:
+  - `risk_score` / `score_max`: 위험 점수와 상한(현재 100점)
+  - `score_grade`: 점수만 기준으로 한 구간 등급. `risk_grade`는 고위험 오버라이드까지 반영한 최종 등급
+  - `score_ranges[]`: 현재 점수 구간의 최소·최대 점수와 등급
+  - `score_breakdown[]`: R1~R8별 `max_points`와 이번 결과에서 더해진 `added_points`
 
 ### `POST /qa`
 

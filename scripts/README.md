@@ -16,6 +16,8 @@
 | `classify_precedent_relevance.py` | 판례 요약을 LLM에 읽혀 전세사기 관련성(`core`/`related`/`unrelated`) 분류 |
 | `collect_precedent_texts.py` | 분류 결과에서 선별한 판례의 전문 수집 (기본 `core`) |
 | `ingest_precedents.py` | 판례 전문 JSONL을 파싱해 `precedents` 테이블에 적재 |
+| `redeploy_backend.sh` | 백엔드 이미지 빌드(Cloud Build) 후 Cloud Run 재배포 |
+| `upload_secrets.py` | `.env`의 API 키를 Secret Manager에 등록 (값 출력 안 함) |
 
 ---
 

@@ -1113,6 +1113,32 @@ _LISTING_CHECK_SYSTEM_PROMPT = """
 - 한국어로 명확하고 간결하게 6~10문장 내외로 작성한다.
 """.strip()
 
+_RISK_ASSESSMENT_SYSTEM_PROMPT = """
+너는 전세 계약 전 위험도 점검 결과를 설명하는 전문 AI 보조자다.
+제공된 점검 결과만 근거로 설명하며, 규칙이 계산한 위험 점수·등급·통과/주의/위험 판정을 바꾸지 않는다.
+입력에 없는 수치, 등기 내용, 법률 사실을 만들지 않는다. 데이터가 부족하거나 확인할 수 없는 항목은 그 불확실성을 명시한다.
+
+답변은 한국어 Markdown으로 다음 순서로 작성한다.
+
+## 핵심 결론
+
+종합 위험 등급과 가장 중요한 이유를 2~3문장으로 설명한다.
+
+## 주요 근거
+
+- 각 위험·주의·확인 불가 항목을 점검 결과의 수치와 함께 설명한다.
+
+## 계약 전 확인 사항
+
+1. 계약 전에 확인하거나 조치할 항목을 우선순위대로 적는다.
+
+제목은 반드시 독립된 줄에 쓰고, 제목 앞뒤에는 빈 줄을 둔다. 목록의 각 항목도 반드시 새 줄에서 시작한다.
+법률적 결론을 단정하지 말고, 필요하면 최신 등기부등본 확인과 전문가 상담을 권한다.
+""".strip()
+
+_RISK_ASSESSMENT_MODEL = "gpt-5.6-terra"
+_RISK_ASSESSMENT_REASONING_EFFORT = "medium"
+
 
 def _to_int(value: Any) -> int:
     if value is None:
@@ -1282,16 +1308,37 @@ _CHECK_WEIGHTS: dict[str, int] = {
     "senior_deposit": 25,
 }
 
+_RISK_SCORE_MAX = 100
+_RISK_SCORE_RANGES = (
+    {"min_score": 0, "max_score": 14, "grade": "safe"},
+    {"min_score": 15, "max_score": 29, "grade": "caution"},
+    {"min_score": 30, "max_score": 59, "grade": "risk"},
+    {"min_score": 60, "max_score": 100, "grade": "high_risk"},
+)
+
+
+def _score_impact(check: ListingCheckResult) -> int:
+    weight = _CHECK_WEIGHTS.get(check.code, 0)
+    if check.status == "fail":
+        return weight
+    if check.status == "warn":
+        return weight // 2
+    return 0
+
+
+def _build_score_breakdown(checks: list[ListingCheckResult]) -> list[dict[str, int | str]]:
+    return [
+        {
+            "code": check.code,
+            "max_points": _CHECK_WEIGHTS.get(check.code, 0),
+            "added_points": _score_impact(check),
+        }
+        for check in checks
+    ]
+
 
 def _compute_risk_score(checks: list[ListingCheckResult]) -> int:
-    score = 0
-    for check in checks:
-        weight = _CHECK_WEIGHTS.get(check.code, 0)
-        if check.status == "fail":
-            score += weight
-        elif check.status == "warn":
-            score += weight // 2
-    return min(score, 100)
+    return min(sum(_score_impact(check) for check in checks), _RISK_SCORE_MAX)
 
 
 def _calculate_jeonse_concentration(
@@ -2092,8 +2139,9 @@ async def _generate_risk_assessment_explanation(
         return "규칙 기반 점검 결과입니다. OPENAI_API_KEY가 없어 자연어 설명은 생략됩니다."
 
     model = ChatOpenAI(
-        model=settings.openai_model,
+        model=_RISK_ASSESSMENT_MODEL,
         api_key=settings.openai_api_key,
+        reasoning_effort=_RISK_ASSESSMENT_REASONING_EFFORT,
         temperature=0.1,
     )
     context_data = {
@@ -2108,7 +2156,7 @@ async def _generate_risk_assessment_explanation(
         "고위험 오버라이드 사유": override_reasons,
     }
     messages = [
-        SystemMessage(content=_LISTING_CHECK_SYSTEM_PROMPT),
+        SystemMessage(content=_RISK_ASSESSMENT_SYSTEM_PROMPT),
         HumanMessage(
             content="다음 점검 결과를 임차인이 이해할 수 있게 설명해줘. "
             "판정은 이미 규칙이 내렸으니 숫자나 등급을 바꾸지 말고 설명만 해줘:\n\n"
@@ -2160,8 +2208,9 @@ async def assess_risk(payload: RiskAssessRequest) -> RiskAssessResponse:
     ]
     summary = _summarize_check_overall(checks)
     risk_score = _compute_risk_score(checks)
+    score_grade = _risk_grade(risk_score)
     override_reasons = _collect_override_reasons(checks, payload)
-    risk_grade = "high_risk" if override_reasons else _risk_grade(risk_score)
+    risk_grade = "high_risk" if override_reasons else score_grade
     explanation = await _generate_risk_assessment_explanation(
         payload, checks, summary, risk_score, risk_grade, override_reasons
     )
@@ -2169,6 +2218,10 @@ async def assess_risk(payload: RiskAssessRequest) -> RiskAssessResponse:
         checks=checks,
         summary=summary,
         risk_score=risk_score,
+        score_max=_RISK_SCORE_MAX,
+        score_grade=score_grade,
+        score_ranges=list(_RISK_SCORE_RANGES),
+        score_breakdown=_build_score_breakdown(checks),
         risk_grade=risk_grade,
         override_reasons=override_reasons,
         llm_explanation=explanation,

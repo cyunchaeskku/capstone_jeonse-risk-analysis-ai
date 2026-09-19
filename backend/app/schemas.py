@@ -169,6 +169,18 @@ class ListingCheckAnalyzeResponse(BaseModel):
 RiskGrade = Literal["safe", "caution", "risk", "high_risk"]
 
 
+class RiskScoreRange(BaseModel):
+    min_score: int
+    max_score: int
+    grade: RiskGrade
+
+
+class RiskScoreContribution(BaseModel):
+    code: str
+    max_points: int
+    added_points: int
+
+
 class MortgageItem(BaseModel):
     """근저당 한 건. 공동담보면 하나의 채권최고액이 여러 물건에 걸린다."""
 
@@ -216,6 +228,10 @@ class RiskAssessResponse(BaseModel):
     checks: list[ListingCheckResult]
     summary: ListingCheckSummary
     risk_score: int
+    score_max: int
+    score_grade: RiskGrade
+    score_ranges: list[RiskScoreRange]
+    score_breakdown: list[RiskScoreContribution]
     risk_grade: RiskGrade
     override_reasons: list[str] = Field(default_factory=list)
     llm_explanation: str
