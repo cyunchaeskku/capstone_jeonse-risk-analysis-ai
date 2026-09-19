@@ -13,7 +13,7 @@ tests/
 # 개인 등기부등본 PDF (실거주지 정보 포함)
 data/*.pdf
 
-# PostgreSQL에서 make_vectorDB.py로 재생성 가능한 벡터 인덱스 (바이너리, 레포에 안 올림)
+# PostgreSQL에서 make_vectorDB_*.py로 재생성 가능한 벡터 인덱스 (바이너리, 레포에 안 올림)
 vectorDB/
 
 # 판례 수집·분류 산출물 (스크립트로 재생성 가능, 수 MB)

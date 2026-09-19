@@ -5,6 +5,7 @@ import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Literal, TypedDict
+from urllib.parse import quote
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
@@ -25,6 +26,8 @@ DISCLAIMER = "이 답변은 참고용 정보이며, 구체적 사실관계에 �
 SCOPE = "jeonse-legal-assistant"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_VECTOR_DB_PATH = Path(__file__).resolve().parents[2] / "vectorDB" / "laws_faiss"
+OFFICIAL_LAW_BASE_URL = "https://www.law.go.kr/법령"
+OFFICIAL_PRECEDENT_BASE_URL = "https://www.law.go.kr/precInfoP.do?precSeq="
 
 CASUAL_HINTS = (
     "이름이 뭐",
@@ -76,25 +79,42 @@ SIMPLE_SYSTEM_PROMPT = """
 현재 질문은 일반 대화 또는 단순 안내로 판단되었으므로, 법령 검색이나 인용 없이 짧고 자연스럽게 답한다.
 질문이 법률 상담에 가깝다면 전세, 임대차, 등기 관련 질문으로 이어가도록 유도한다.
 답변은 한국어로 하고, 과도하게 길게 쓰지 않는다.
+답변은 Markdown으로 작성한다. 섹션 제목은 반드시 독립된 줄에 `## 제목`으로 쓰고, 제목 앞뒤에는 빈 줄을 둔다.
+목록의 각 항목은 반드시 새 줄에서 `-` 또는 `1.`로 시작한다. 제목·목록·본문을 같은 줄에 이어 쓰지 않는다.
 """.strip()
 
 LEGAL_SYSTEM_PROMPT = """
 당신은 한국 전세 계약 법령 질의응답 보조자다.
-아래 제공된 법령 출처만 근거로 답변한다. 출처에 없는 조문 번호, 법령명, 판례는 만들지 않는다.
+아래 제공된 출처(법령 조문과 판례)만 근거로 답변한다. 출처에 없는 조문 번호, 법령명, 사건번호는 만들지 않는다.
+법령 조문은 규정 자체를, 판례는 그 규정이 실제 분쟁에서 어떻게 해석됐는지를 보여준다. 둘 다 있으면 조문을 먼저 들고 판례로 보충한다.
+판례를 인용할 때는 사건번호(예: 대법원 2022다255126)를 함께 적는다. 주어진 판례가 질문의 사실관계와 다르면 그 차이를 밝힌다.
 답변은 한국어로, 핵심 결론 -> 근거 -> 실무 체크포인트 순서로 간결하게 작성한다.
+답변은 Markdown으로 작성한다. `## 핵심 결론`, `## 근거`, `## 실무 체크포인트`는 각각 독립된 줄에 쓰고, 제목 앞뒤에는 빈 줄을 둔다.
+근거와 체크포인트의 각 항목은 반드시 새 줄에서 `-` 또는 `1.`로 시작한다. 제목·목록·본문을 같은 줄에 이어 쓰지 않는다.
 출처가 부족하면 부족하다고 명시하고, 추정으로 단정하지 않는다.
 """.strip()
 
 
 class LegalSourceRecord(TypedDict, total=False):
     citation_label: str
-    law_name: str
-    jo_code: str | None
-    article_number: str | None
-    article_title: str | None
+    source_type: Literal["law_article", "precedent"]
     score: float | None
     excerpt: str | None
     content: str | None
+    official_url: str | None
+    # 법령 조문일 때만
+    law_name: str | None
+    jo_code: str | None
+    article_number: str | None
+    article_title: str | None
+    # 판례일 때만
+    precedent_id: str | None
+    case_name: str | None
+    case_number: str | None
+    court: str | None
+    decision_date: str | None
+    decision_type: str | None
+    section: str | None
 
 
 class QaState(TypedDict, total=False):
@@ -155,15 +175,61 @@ def _clean_text(value: str | None) -> str:
     return " ".join(value.split()).strip()
 
 
+def _build_official_law_url(law_name: str | None, article_number: str | None) -> str | None:
+    if not law_name or not article_number:
+        return None
+    return f"{OFFICIAL_LAW_BASE_URL}/{quote(law_name.strip(), safe='')}/{quote(article_number.strip(), safe='')}"
+
+
+def _build_official_precedent_url(precedent_id: str | None) -> str | None:
+    if not precedent_id or not precedent_id.isdigit():
+        return None
+    return f"{OFFICIAL_PRECEDENT_BASE_URL}{quote(precedent_id, safe='')}"
+
+
+def _excerpt(value: str, limit: int = 280) -> str:
+    text = _clean_text(value)
+    return text[:limit].rstrip() + "..." if len(text) > limit else text
+
+
+def _strip_law_header(page_content: str) -> str:
+    """법령 조문 앞에 붙은 머리말(법령명~조문제목)을 걷어내고 본문만 남긴다.
+
+    머리말이 280자 발췌를 다 채워서 정작 조문 본문이 화면에도 LLM 컨텍스트에도 안 들어갔다.
+    법령명·조문번호는 메타데이터로 따로 전달된다.
+    """
+    _, separator, body = page_content.partition("\n본문:")
+    return body.lstrip("\n") if separator else page_content
+
+
+def _strip_precedent_header(page_content: str) -> str:
+    """판례 청크 앞에 붙은 머리말 4줄(판례/선고일/사건명/구분)을 발췌에서 걷어낸다.
+
+    머리말은 검색용으로 붙인 것이라 그대로 발췌하면 화면에 같은 문구만 반복된다.
+    """
+    parts = page_content.split("\n", 4)
+    if len(parts) == 5 and parts[3].startswith("구분:"):
+        return parts[4]
+    return page_content
+
+
 class ChatbotService:
     def __init__(self) -> None:
         self._model_name = settings.openai_model
-        vector_db_path = Path(settings.vector_db_path).expanduser()
-        self._vector_db_path = vector_db_path if vector_db_path.is_absolute() else PROJECT_ROOT / vector_db_path
+        self._reasoning_effort = settings.openai_reasoning_effort
+        self._vector_db_path = self._resolve_path(settings.vector_db_path)
+        self._precedent_vector_db_path = self._resolve_path(settings.precedent_vector_db_path)
         self._embedding_model = settings.vector_db_embedding_model
         self._top_k = settings.vector_db_top_k
+        self._precedent_top_k = settings.vector_db_precedent_top_k
         self._vectorstore: FAISS | None = None
+        self._precedent_vectorstore: FAISS | None = None
         self._graph = self._build_graph()
+
+    @staticmethod
+    def _resolve_path(raw: str) -> Path:
+        path = Path(raw).expanduser()
+        return path if path.is_absolute() else PROJECT_ROOT / path
 
     def _build_model(self, temperature: float = 0.2) -> ChatOpenAI:
         if not settings.openai_api_key or not settings.openai_api_key.strip():
@@ -172,11 +238,11 @@ class ChatbotService:
         return ChatOpenAI(
             model=self._model_name,
             api_key=settings.openai_api_key,
+            reasoning_effort=self._reasoning_effort,
             temperature=temperature,
         )
 
-    def _load_vectorstore(self) -> FAISS | None:
-        index_path = self._vector_db_path
+    def _load_vectorstore(self, index_path: Path) -> FAISS | None:
         required_files = [index_path / "index.faiss", index_path / "index.pkl"]
         if not all(path.exists() for path in required_files):
             LOGGER.warning("Vector DB not found at %s; legal QA will fall back to empty sources.", index_path)
@@ -198,8 +264,13 @@ class ChatbotService:
 
     def _get_vectorstore(self) -> FAISS | None:
         if self._vectorstore is None:
-            self._vectorstore = self._load_vectorstore()
+            self._vectorstore = self._load_vectorstore(self._vector_db_path)
         return self._vectorstore
+
+    def _get_precedent_vectorstore(self) -> FAISS | None:
+        if self._precedent_vectorstore is None:
+            self._precedent_vectorstore = self._load_vectorstore(self._precedent_vector_db_path)
+        return self._precedent_vectorstore
 
     def _build_graph(self):
         graph = StateGraph(QaState)
@@ -265,21 +336,22 @@ class ChatbotService:
             "sources": [],
         }
 
-    def _retrieve_legal_sources(self, question: str) -> list[LegalSourceRecord]:
-        vectorstore = self._get_vectorstore()
-        if vectorstore is None:
-            return []
-
+    def _search(self, vectorstore: FAISS, question: str, k: int) -> list:
         try:
-            results = vectorstore.similarity_search_with_score(question, k=self._top_k)
+            return vectorstore.similarity_search_with_score(question, k=k)
         except Exception:  # pragma: no cover - retrieval fallback
             LOGGER.exception("Vector similarity search failed for question=%r", question)
+            return []
+
+    def _retrieve_law_sources(self, question: str) -> list[LegalSourceRecord]:
+        vectorstore = self._get_vectorstore()
+        if vectorstore is None:
             return []
 
         sources: list[LegalSourceRecord] = []
         seen_labels: set[str] = set()
 
-        for doc, score in results:
+        for doc, score in self._search(vectorstore, question, self._top_k):
             metadata = doc.metadata or {}
             citation_label = _clean_text(metadata.get("citation_label")) or _clean_text(
                 f"{metadata.get('law_name', '')} {metadata.get('article_number') or metadata.get('jo_code') or ''}"
@@ -288,24 +360,75 @@ class ChatbotService:
                 continue
 
             seen_labels.add(citation_label)
-            excerpt = _clean_text(doc.page_content)
-            if len(excerpt) > 280:
-                excerpt = excerpt[:280].rstrip() + "..."
+            body = _strip_law_header(doc.page_content)
 
             sources.append(
                 {
                     "citation_label": citation_label,
+                    "source_type": "law_article",
                     "law_name": _clean_text(metadata.get("law_name")) or citation_label,
                     "jo_code": metadata.get("jo_code"),
                     "article_number": metadata.get("article_number"),
                     "article_title": metadata.get("article_title"),
                     "score": float(score) if score is not None else None,
-                    "excerpt": excerpt,
-                    "content": doc.page_content,
+                    "excerpt": _excerpt(body),
+                    "content": body,
+                    "official_url": _build_official_law_url(
+                        metadata.get("law_name"),
+                        metadata.get("article_number") or metadata.get("jo_code"),
+                    ),
                 }
             )
 
         return sources
+
+    def _retrieve_precedent_sources(self, question: str) -> list[LegalSourceRecord]:
+        """판례는 한 건이 여러 청크라, 넉넉히 꺼낸 뒤 판례 단위로 묶어 상위 N건만 남긴다."""
+        vectorstore = self._get_precedent_vectorstore()
+        if vectorstore is None:
+            return []
+
+        sources: list[LegalSourceRecord] = []
+        seen_ids: set[str] = set()
+
+        for doc, score in self._search(vectorstore, question, self._precedent_top_k * 3):
+            if len(sources) >= self._precedent_top_k:
+                break
+
+            metadata = doc.metadata or {}
+            precedent_id = metadata.get("precedent_id")
+            if not precedent_id or precedent_id in seen_ids:
+                continue
+
+            citation_label = _clean_text(metadata.get("citation_label"))
+            if not citation_label:
+                continue
+
+            seen_ids.add(precedent_id)
+            body = _strip_precedent_header(doc.page_content)
+
+            sources.append(
+                {
+                    "citation_label": citation_label,
+                    "source_type": "precedent",
+                    "precedent_id": precedent_id,
+                    "case_name": _clean_text(metadata.get("case_name")) or None,
+                    "case_number": _clean_text(metadata.get("case_number")) or None,
+                    "court": _clean_text(metadata.get("court")) or None,
+                    "decision_date": _clean_text(metadata.get("decision_date")) or None,
+                    "decision_type": _clean_text(metadata.get("decision_type")) or None,
+                    "section": _clean_text(metadata.get("section")) or None,
+                    "score": float(score) if score is not None else None,
+                    "excerpt": _excerpt(body),
+                    "content": body,
+                    "official_url": _build_official_precedent_url(precedent_id),
+                }
+            )
+
+        return sources
+
+    def _retrieve_legal_sources(self, question: str) -> list[LegalSourceRecord]:
+        return self._retrieve_law_sources(question) + self._retrieve_precedent_sources(question)
 
     def _retrieve_legal_sources_node(self, state: QaState) -> QaState:
         return {"sources": self._retrieve_legal_sources(state["question"])}
@@ -316,12 +439,23 @@ class ChatbotService:
 
         blocks: list[str] = []
         for index, source in enumerate(sources, start=1):
-            lines = [
-                f"[{index}] {source['citation_label']}",
-                f"법령명: {source['law_name']}",
-            ]
-            if source.get("article_title"):
-                lines.append(f"조문제목: {source['article_title']}")
+            lines = [f"[{index}] {source['citation_label']}"]
+
+            if source.get("source_type") == "precedent":
+                lines.append("종류: 판례")
+                if source.get("case_name"):
+                    lines.append(f"사건명: {source['case_name']}")
+                decided = " ".join(filter(None, [source.get("court"), source.get("decision_date")]))
+                if decided:
+                    lines.append(f"선고: {decided}")
+                if source.get("section"):
+                    lines.append(f"해당 부분: {source['section']}")
+            else:
+                lines.append("종류: 법령 조문")
+                lines.append(f"법령명: {source['law_name']}")
+                if source.get("article_title"):
+                    lines.append(f"조문제목: {source['article_title']}")
+
             if source.get("excerpt"):
                 lines.append(f"본문 발췌: {source['excerpt']}")
             blocks.append("\n".join(lines))
@@ -347,7 +481,7 @@ class ChatbotService:
             history=state.get("history", []),
             analysis=state.get("analysis"),
             system_prompt=LEGAL_SYSTEM_PROMPT,
-            extra_system_messages=[f"법령 출처:\n{legal_context}"],
+            extra_system_messages=[f"검색된 출처(법령 조문·판례):\n{legal_context}"],
         )
         result = model.invoke(messages)
         answer = result.content if isinstance(result.content, str) else str(result.content)
@@ -388,7 +522,7 @@ class ChatbotService:
                 return
 
             system_prompt = LEGAL_SYSTEM_PROMPT
-            extra_system_messages = [f"법령 출처:\n{self._build_legal_context(sources)}"]
+            extra_system_messages = [f"검색된 출처(법령 조문·판례):\n{self._build_legal_context(sources)}"]
 
         model = self._build_model()
         messages = _build_messages(

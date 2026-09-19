@@ -120,7 +120,7 @@ http://localhost:8000
 | RDB | PostgreSQL | 분석 이력 저장 |
 | Vector DB | FAISS | 법률 문서 벡터 인덱스 저장 및 유사도 검색 |
 | AI / LLM | GPT-5.4 nano (OpenAI API) | 규칙 기반 결과 설명, QA 응답 보조 |
-| AI / LLM | text-embedding-3-small | 법률 문서 벡터 임베딩 |
+| AI / LLM | text-embedding-3-large | 법률 문서 벡터 임베딩 (법령·판례) |
 | RAG | LangChain | 검색 증강 생성 파이프라인 |
 | 문서 파싱 | PyMuPDF | PDF 텍스트 추출 |
 | 문서 파싱 | Upstage Document Parse API | 고정밀 문서 파싱 |

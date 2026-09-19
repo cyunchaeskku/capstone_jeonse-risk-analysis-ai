@@ -96,6 +96,8 @@
   - `token` 이벤트는 `{ "text": "..." }`를 전송한다
   - `done` 이벤트는 `references`, `sources`, `disclaimer`, `scope`, `route`를 전송한다
   - `sources[].content`는 선택한 출처의 상세 보기에 사용하는 전체 인덱스 본문이다
+  - `sources[].official_url`은 법령이면 국가법령정보센터 현행 조문, 판례면 해당 판례 원문 링크다
+  - 판례 `sources[]`에는 사건명, 사건번호, 선고법원, 선고일, 판결유형, 검색된 구간을 포함한다
   - `error` 이벤트는 `code`, `message`, `action_hint`을 전송한다
   - 백엔드는 무상태이며 최근 대화 문맥은 요청에 포함한다
 - 요청 필드:

@@ -1,10 +1,16 @@
 """
 법령 RDB 데이터를 LangChain FAISS 벡터DB로 변환한다.
 
+판례는 `make_vectorDB_precedents.py`가 별도 인덱스로 만든다.
+
 실행:
-    python scripts/make_vectorDB.py
-    python scripts/make_vectorDB.py --dry-run
-    python scripts/make_vectorDB.py --limit 200
+    python scripts/make_vectorDB_laws.py
+    python scripts/make_vectorDB_laws.py --dry-run
+    python scripts/make_vectorDB_laws.py --limit 200
+    python scripts/make_vectorDB_laws.py --append   # 기존 인덱스에 없는 조문만 임베딩해 추가
+
+--append는 doc_id 기준으로 새 조문만 붙인다. 이미 인덱스에 있는 조문은 본문이 바뀌었어도
+다시 임베딩하지 않고, DB에서 지운 법령도 인덱스에 남는다. 그런 변경이 있으면 전체 재빌드한다.
 """
 
 from __future__ import annotations
@@ -33,7 +39,7 @@ from backend.app.models.law import Law, LawArticle
 from backend.app.settings import settings
 
 DEFAULT_OUT_DIR = PROJECT_ROOT / "vectorDB" / "laws_faiss"
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_EMBEDDING_MODEL = "text-embedding-3-large"  # settings.vector_db_embedding_model과 맞춘다
 DEFAULT_BATCH_SIZE = 100
 
 
@@ -144,6 +150,11 @@ def load_docs(limit: int | None) -> list[VectorDoc]:
     return docs
 
 
+def load_existing_docs(out_dir: Path) -> list[VectorDoc]:
+    with (out_dir / "documents.jsonl").open(encoding="utf-8") as f:
+        return [VectorDoc(**json.loads(line)) for line in f if line.strip()]
+
+
 def ensure_out_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
@@ -210,6 +221,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--limit", type=int, help="개발용: 최대 문서 수")
     parser.add_argument("--dry-run", action="store_true", help="인덱스 생성 없이 통계만 출력")
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="기존 인덱스에 없는 조문(doc_id 기준)만 임베딩해 추가",
+    )
     return parser.parse_args()
 
 
@@ -227,6 +243,31 @@ def main() -> None:
     print(f"문서 수: {len(docs)}")
     print(f"샘플 인용: {docs[0].metadata['citation_label']}")
 
+    existing_docs: list[VectorDoc] = []
+    if args.append:
+        manifest_path = out_dir / "manifest.json"
+        if not manifest_path.exists():
+            print(f"오류: 기존 인덱스가 없습니다 ({out_dir}). --append 없이 먼저 빌드하세요.")
+            raise SystemExit(1)
+
+        # 다른 모델의 벡터가 섞이면 차원이 달라 검색이 깨진다.
+        index_model = json.loads(manifest_path.read_text(encoding="utf-8"))["embedding_model"]
+        if index_model != args.embedding_model:
+            print(f"오류: 기존 인덱스 모델({index_model})과 --embedding-model({args.embedding_model})이 다릅니다.")
+            raise SystemExit(1)
+
+        existing_docs = load_existing_docs(out_dir)
+        existing_ids = {doc.doc_id for doc in existing_docs}
+        docs = [doc for doc in docs if doc.doc_id not in existing_ids]
+        print(f"기존 인덱스 {len(existing_docs)}개, 새로 추가할 조문 {len(docs)}개")
+        for law_name in sorted({doc.metadata["law_name"] for doc in docs}):
+            count = sum(1 for doc in docs if doc.metadata["law_name"] == law_name)
+            print(f"  + {law_name}: {count}개")
+
+        if not docs:
+            print("추가할 조문이 없습니다.")
+            return
+
     if args.dry_run:
         print("dry-run 완료 (임베딩/저장 생략)")
         return
@@ -242,15 +283,22 @@ def main() -> None:
         chunk_size=args.batch_size,
     )
 
-    vectorstore = FAISS.from_texts(
-        texts=[doc.page_content for doc in docs],
-        embedding=embeddings,
-        metadatas=[doc.metadata for doc in docs],
-        ids=[doc.doc_id for doc in docs],
-    )
+    texts = [doc.page_content for doc in docs]
+    metadatas = [doc.metadata for doc in docs]
+    ids = [doc.doc_id for doc in docs]
+    if args.append:
+        vectorstore = FAISS.load_local(str(out_dir), embeddings, allow_dangerous_deserialization=True)
+        vectorstore.add_texts(texts=texts, metadatas=metadatas, ids=ids)
+    else:
+        vectorstore = FAISS.from_texts(texts=texts, embedding=embeddings, metadatas=metadatas, ids=ids)
 
     print("산출물 저장 중...")
-    save_artifacts(out_dir=out_dir, docs=docs, vectorstore=vectorstore, model=args.embedding_model)
+    save_artifacts(
+        out_dir=out_dir,
+        docs=existing_docs + docs,
+        vectorstore=vectorstore,
+        model=args.embedding_model,
+    )
 
     print("완료")
     print(f"- out_dir: {out_dir}")

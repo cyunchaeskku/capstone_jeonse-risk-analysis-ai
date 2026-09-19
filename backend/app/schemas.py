@@ -71,13 +71,27 @@ class RiskFactor(BaseModel):
 
 class LegalSource(BaseModel):
     citation_label: str
-    law_name: str
-    jo_code: str | None = None
-    article_number: str | None = None
-    article_title: str | None = None
+    # 법령 조문과 판례를 같은 목록으로 돌려주므로, 어느 쪽인지 여기서 구분한다.
+    source_type: Literal["law_article", "precedent"] = "law_article"
     score: float | None = None
     excerpt: str | None = None
     content: str | None = None
+    official_url: str | None = None
+
+    # 법령 조문일 때만 채워진다
+    law_name: str | None = None
+    jo_code: str | None = None
+    article_number: str | None = None
+    article_title: str | None = None
+
+    # 판례일 때만 채워진다
+    precedent_id: str | None = None
+    case_name: str | None = None
+    case_number: str | None = None
+    court: str | None = None
+    decision_date: str | None = None
+    decision_type: str | None = None
+    section: str | None = None
 
 
 class AnalysisDetailResponse(BaseModel):

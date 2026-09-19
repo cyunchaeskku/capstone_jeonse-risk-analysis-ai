@@ -24,7 +24,8 @@
 - DB는 `RDB/docker-compose.yml`로 PostgreSQL 16 컨테이너를 운영하고, Alembic으로 마이그레이션을 관리한다.
 - SQLAlchemy 모델은 `backend/app/models/law.py`, 엔진/세션은 `backend/app/db.py`에 정의한다.
 - `korean-law-mcp`를 Claude Desktop MCP 서버로 등록 완료했다 (Remote URL, OC: cyunchaeskku).
-- `scripts/make_vectorDB.py`를 추가해 `laws` + `law_articles`를 조문 단위로 LangChain FAISS 벡터DB(`vectorDB/laws_faiss`)로 생성할 수 있게 했다.
+- `scripts/make_vectorDB_laws.py`를 추가해 `laws` + `law_articles`를 조문 단위로 LangChain FAISS 벡터DB(`vectorDB/laws_faiss`)로 생성할 수 있게 했다.
+- `scripts/make_vectorDB_precedents.py`를 추가해 `precedents`를 섹션 단위로 청킹한 별도 인덱스(`vectorDB/precedents_faiss`, 1,301청크)를 만든다. 판시사항·판결요지는 자르지 않고, 전문만 1,000자/overlap 150자로 자른다.
 - 벡터 문서 metadata에 `citation_label`(`법령명 + 조문번호`)을 포함해 검색 결과에서 곧바로 인용 표시가 가능하다.
 - QA는 LangGraph로 질문 분류 후 분기한다. 단순 질문은 vector search를 건너뛰고, 법령 질문만 FAISS 검색을 탄다.
 - QA 응답은 `references`와 `sources`를 함께 반환해 프론트에서 출처 문서를 표시한다.

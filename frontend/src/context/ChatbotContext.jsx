@@ -3,13 +3,23 @@ import { createContext, useContext, useMemo, useState } from 'react';
 const ChatbotContext = createContext(null);
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 const HISTORY_TURN_LIMIT = 2;
+const timestampFormatter = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Seoul',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+function formatTimestamp(date = new Date()) {
+  return timestampFormatter.format(date);
+}
 
 const initialMessages = [
   {
     id: 'welcome',
     role: 'assistant',
     text: '안녕하세요. 전세계약 관련 위험 요소나 확인 포인트를 물어보면 구조적으로 정리해드릴게요.',
-    timestamp: '지금',
+    timestamp: formatTimestamp(),
   },
 ];
 
@@ -31,7 +41,7 @@ function buildAssistantMessage(text, options = {}) {
     id: options.id ?? `assistant-${Date.now()}`,
     role: 'assistant',
     text,
-    timestamp: '방금 전',
+    timestamp: formatTimestamp(),
     isError: options.isError ?? false,
     references: options.references ?? [],
     sources: options.sources ?? [],
@@ -71,7 +81,7 @@ export function ChatbotProvider({ children }) {
       id: `user-${Date.now()}`,
       role: 'user',
       text: trimmed,
-      timestamp: '방금 전',
+      timestamp: formatTimestamp(),
     };
     const history = toRecentHistory(messages);
 

@@ -52,9 +52,11 @@
 - `scripts/`: 법령 수집과 FAISS 생성 스크립트
   - `ingest_laws.py`: `korean-law` CLI로 법령을 PostgreSQL에 저장
   - `collect_precedent_summaries.py`: 키워드별 판례 후보를 검색하고 ID별 요약을 JSONL로 저장
-  - `make_vectorDB.py`: PostgreSQL 법령/조문 데이터를 `vectorDB/laws_faiss`로 변환
+  - `make_vectorDB_laws.py`: PostgreSQL 법령/조문 데이터를 `vectorDB/laws_faiss`로 변환
+  - `make_vectorDB_precedents.py`: PostgreSQL 판례를 청킹해 `vectorDB/precedents_faiss`로 변환
   - `law_targets.yaml`: 수집 대상 법령 목록
 - `vectorDB/laws_faiss/`: LangChain FAISS 법령 인덱스 산출물
+- `vectorDB/precedents_faiss/`: LangChain FAISS 판례 인덱스 산출물 (법령과 분리)
 - `data/address_code.csv`: 매물 검색에서 사용하는 법정동 코드 CSV
 - `docs/연구보고서/`: 주차별 연구 기록
 
@@ -156,8 +158,8 @@ alembic -c RDB/alembic.ini upgrade head
 - 프론트엔드 dev server: `http://localhost:5173`
 - 백엔드 dev server: `http://localhost:8000`
 - PostgreSQL URL 기본값: `postgresql+psycopg://postgres:postgres@localhost:5432/jeonse_db`
-- OpenAI model 기본값: `gpt-4.1-nano`
-- Embedding model 기본값: `text-embedding-3-small`
+- OpenAI model 기본값: `gpt-5.6-luna` (`OPENAI_REASONING_EFFORT=medium`)
+- Embedding model 기본값: `text-embedding-3-large` (법령·판례 인덱스와 챗봇 질의가 모두 같은 모델이어야 한다)
 - FAISS index 기본값: `vectorDB/laws_faiss`
 
 ## 데이터와 외부 의존성

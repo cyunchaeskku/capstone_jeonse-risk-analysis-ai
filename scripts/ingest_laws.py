@@ -137,9 +137,10 @@ def _fmt_date(value: str) -> str | None:
 #   특정 조문 조회: ...
 # ---------------------------------------------------------------------------
 
-def fetch_article_numbers(mst: str) -> list[str]:
+# 조회는 법령ID(--lawId)로 한다. 2026-09 기준 법제처 API가 --mst 조회에 에러 페이지를 반환한다.
+def fetch_article_numbers(law_id: str) -> list[str]:
     """get_law_text로 목차를 가져와 조문 번호 목록(예: ['제1조','제2조',...])을 반환한다."""
-    text = call_korean_law("get_law_text", "--mst", mst)
+    text = call_korean_law("get_law_text", "--lawId", law_id)
 
     numbers = []
     seen = set()
@@ -173,14 +174,14 @@ def fetch_article_numbers(mst: str) -> list[str]:
 #   본문...
 # ---------------------------------------------------------------------------
 
-def fetch_articles(mst: str) -> list[dict]:
+def fetch_articles(law_id: str) -> list[dict]:
     """
     목차 → 조문 번호 추출 → get_batch_articles 일괄 조회.
     반환: [{jo_code, article_number, title, full_text}, ...]
     """
-    numbers = fetch_article_numbers(mst)
+    numbers = fetch_article_numbers(law_id)
     if not numbers:
-        raise RuntimeError(f"mst={mst}: 목차에서 조문 번호를 찾지 못했습니다.")
+        raise RuntimeError(f"law_id={law_id}: 목차에서 조문 번호를 찾지 못했습니다.")
 
     print(f"  목차 조문 수: {len(numbers)}")
 
@@ -190,7 +191,7 @@ def fetch_articles(mst: str) -> list[dict]:
         chunk = numbers[i : i + BATCH_CHUNK_SIZE]
         text = call_korean_law(
             "get_batch_articles",
-            "--mst", mst,
+            "--lawId", law_id,
             "--articles", json.dumps(chunk, ensure_ascii=False),
         )
         all_articles.extend(_parse_batch_output(text))
@@ -339,7 +340,7 @@ def ingest_one(name: str, dry_run: bool) -> None:
     print(f"  mst={meta['mst']}, 카테고리={meta.get('category')}, 시행일={meta.get('enforcement_date')}")
 
     print(f"[{name}] 조문 조회 중...")
-    articles = fetch_articles(meta["mst"])
+    articles = fetch_articles(meta["law_id"])
     print(f"  조문 {len(articles)}개 파싱됨")
 
     if dry_run:

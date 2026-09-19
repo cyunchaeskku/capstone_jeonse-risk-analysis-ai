@@ -10,8 +10,8 @@
 | `alembic.ini` | Alembic 설정 파일 |
 | `alembic/` | 마이그레이션 스크립트 |
 
-테이블 3개: `laws`, `law_articles`, `law_relations`  
-SQLAlchemy 모델 정의: `backend/app/models/law.py`
+테이블 4개: `laws`, `law_articles`, `law_relations`, `precedents`  
+SQLAlchemy 모델 정의: `backend/app/models/law.py`, `backend/app/models/precedent.py`
 
 ---
 
@@ -53,7 +53,30 @@ erDiagram
         int child_law_id FK
         varchar(20) relation_type
     }
+
+    precedents {
+        varchar(20) precedent_id PK
+        text case_name
+        varchar(50) case_number
+        varchar(50) court
+        date decision_date
+        varchar(20) decision_type
+        text source_url
+        varchar(20) label
+        text holding
+        text summary
+        text referenced_statutes
+        text referenced_precedents
+        text body
+        text raw_text
+        timestamptz fetched_at
+        timestamptz updated_at
+    }
 ```
+
+`precedents`는 `laws`와 FK로 연결되지 않는다. 판례가 인용한 법령은 `referenced_statutes`에
+`"주택임대차보호법 제3조 제1항, 제3조의2 제2항"` 같은 원문 문자열로 들어있어서, 조인이 필요하면
+`laws.name`과 문자열 매칭으로 푼다.
 
 ### `laws`
 
@@ -108,11 +131,57 @@ erDiagram
 |--------|------|
 | `law_relations_parent_law_id_child_law_id_key` | UNIQUE (`parent_law_id`, `child_law_id`) |
 
+### `precedents`
+
+판례 한 건이 한 행. 법령과 달리 판례는 조문 같은 고정 단위가 없는 긴 글이라 쪼개지 않고 통째로 넣는다.
+임베딩용 청크는 이 테이블에 저장하지 않고 `make_vectorDB_precedents.py`가 인덱싱 시점에 만든다 —
+청크 크기는 튜닝 대상이라 마이그레이션이 아니라 스크립트 재실행으로 바꾸는 게 맞고, 청크 텍스트는
+`vectorDB/precedents_faiss/documents.jsonl`에 남는다. 판시사항·판결요지는 자르지 않고 각각 1청크,
+전문만 1,000자/overlap 150자로 자른다 (212건 → 1,301청크).
+
+`holding`~`body`는 법제처 API가 섹션으로 나눠 주는 값을 파싱해 넣은 것이다. 파싱 과정에서 `<br/>`은
+줄바꿈으로 바꾸고 나머지 태그는 지운다. 원본은 `raw_text`에 그대로 남아 있어 언제든 다시 파싱할 수 있다.
+
+| 컬럼 | 타입 | 제약 | 설명 |
+|------|------|------|------|
+| `precedent_id` | `varchar(20)` | PK | 법제처 판례일련번호. 수집 JSONL과 FAISS 메타데이터를 잇는 키 |
+| `case_name` | `text` | NOT NULL | 사건명. 최근 대법원 판례는 대괄호 안에 쟁점 요약이 붙어 길다 |
+| `case_number` | `varchar(50)` | NULL | 사건번호(`2022다255126`). 인용 표기에 쓴다 |
+| `court` | `varchar(50)` | NULL | 선고 법원 |
+| `decision_date` | `date` | NULL | 선고일 |
+| `decision_type` | `varchar(20)` | NULL | 판결/결정 등 |
+| `source_url` | `text` | NULL | 법제처 원문 링크(상대 경로) |
+| `label` | `varchar(20)` | NULL | 전세사기 관련성 분류 결과. 아래 설명 참고 |
+| `holding` | `text` | NULL | 판시사항. 쟁점을 한 문단으로 압축한 부분 |
+| `summary` | `text` | NULL | 판결요지. 법리 핵심. 없는 판례도 있다 |
+| `referenced_statutes` | `text` | NULL | 참조조문. `laws` 테이블과 이어지는 유일한 연결고리 |
+| `referenced_precedents` | `text` | NULL | 참조판례 |
+| `body` | `text` | NULL | 전문. 분량의 약 73%를 차지한다 |
+| `raw_text` | `text` | NOT NULL | `get_precedent_text` 응답 원본. 섹션 파싱이 틀렸을 때의 안전망 |
+| `fetched_at` | `timestamptz` | NOT NULL, default `now()` | 최초 적재 시각 |
+| `updated_at` | `timestamptz` | NOT NULL, default `now()` | 마지막 갱신 시각 |
+
+#### `label` 값의 의미
+
+`scripts/classify_precedent_relevance.py`가 판례 요약을 LLM(gpt-4.1-mini)에 읽혀 매긴 값이다.
+사람이 검수한 라벨이 아니라 **선별용 분류 결과**이므로, 경계선에 있는 판례는 틀릴 수 있다.
+
+| 값 | 의미 | 예 |
+|----|------|-----|
+| `core` | 주택 임대차 보증금이 직접 쟁점 | 보증금 반환, 대항력·우선변제권·확정일자, 임차권등기, 전세보증금 편취 사기, 경매 배당에서 임차인의 지위 |
+| `related` | 임대차가 직접 쟁점은 아니지만 전세 위험 판단에 쓰이는 법리 | 근저당권과 채권최고액, 사해행위취소, 배당순위, 조세채권 우선순위, 사기죄의 기망·고의 판단 |
+| `unrelated` | 그 외 | 이 테이블에 적재하지 않는다 |
+
+현재 적재된 것은 `core` 212건뿐이다. `related` 1,201건은 임대차 사건이 아닌 비율이 높아
+(사해행위취소 317건, 근저당권 244건) 인덱싱 시 엉뚱한 법리가 근거로 잡힐 위험이 있어 보류했다.
+필요하면 `python scripts/collect_precedent_texts.py --label related`로 전문을 받아 추가한다.
+
 ### 관계 요약
 
 - `laws` 1 : N `law_articles`
 - `laws` 1 : N `law_relations` (`parent_law_id`)
 - `laws` 1 : N `law_relations` (`child_law_id`)
+- `precedents`는 독립 테이블 (FK 없음, `referenced_statutes` 문자열로만 `laws`와 이어진다)
 
 ## 실행 방법
 
@@ -208,3 +277,17 @@ python scripts/ingest_laws.py
 # 특정 법령만
 python scripts/ingest_laws.py --only "부동산등기법"
 ```
+
+## 판례 데이터 수집
+
+법령과 달리 판례는 이름으로 지정할 수 없어 키워드 검색 → LLM 선별 → 원문 수집 순서를 거친다.
+앞의 세 단계 산출물은 `data/*.jsonl`이고 gitignore 대상이다.
+
+```bash
+python scripts/collect_precedent_summaries.py    # 검색 + 요약  → data/precedent_summaries.jsonl
+python scripts/classify_precedent_relevance.py   # 관련성 분류  → data/precedent_relevance.jsonl
+python scripts/collect_precedent_texts.py        # core 전문    → data/precedent_texts.jsonl
+python scripts/ingest_precedents.py              # 적재         → precedents 테이블
+```
+
+`ingest_precedents.py`는 `precedent_id` 기준 업서트라 여러 번 돌려도 중복되지 않는다.

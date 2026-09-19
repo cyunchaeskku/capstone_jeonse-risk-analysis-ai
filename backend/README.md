@@ -14,7 +14,7 @@ DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:5432/jeonse_db"
 ```
 
 `DATABASE_URL`은 **필수**다. 기본값이 없어서 미설정 시 기동 즉시 `ValidationError`로 실패한다 —
-자격증명을 소스코드에 두지 않기 위함이다. `OPENAI_MODEL`, `VECTOR_DB_PATH`는 기본값이 있어 생략 가능하다.
+자격증명을 소스코드에 두지 않기 위함이다. `OPENAI_MODEL`, `OPENAI_REASONING_EFFORT`, `VECTOR_DB_PATH`는 기본값이 있어 생략 가능하다.
 
 ```bash
 uvicorn backend.app.main:app --reload

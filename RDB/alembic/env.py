@@ -6,7 +6,7 @@ from sqlalchemy import pool
 from alembic import context
 
 from backend.app.db import Base
-from backend.app.models import Law, LawRelation, LawArticle  # noqa: F401
+from backend.app.models import Law, LawRelation, LawArticle, Precedent  # noqa: F401
 from backend.app.settings import settings
 
 config = context.config
