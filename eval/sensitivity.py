@@ -60,7 +60,6 @@ def score(
     *,
     proportional: bool = True,
     r8_weight: int = _CHECK_WEIGHTS["senior_deposit"],
-    unknown_floor: bool = True,
 ) -> int:
     """기본값이 곧 현행 설계. kwargs로 개별 변경을 되돌린다."""
     total = 0
@@ -81,12 +80,17 @@ def score(
         else:
             total += _stepwise(check, weight)
 
-    total = min(total, 100)
-    if unknown_floor:
+    return min(total, 100)
+
+
+def grade(total: int, checks: list[ListingCheckResult], *, unknown_floor: bool = True) -> str:
+    """§0-2 바닥. 점수가 아니라 등급에 건다."""
+    result = _risk_grade(total)
+    if unknown_floor and result == "safe":
         by_code = {c.code: c.status for c in checks}
         if all(by_code[code] == "unknown" for code in BURDEN_CODES):
-            total = max(total, 15)  # 담보 여력을 하나도 못 봤으면 '안전'이라 말하지 않는다
-    return total
+            return "caution"  # 담보 여력을 하나도 못 봤으면 '안전'이라 말하지 않는다
+    return result
 
 
 def overrides(
@@ -111,7 +115,7 @@ def overrides(
     return reasons
 
 
-# (설명, score kwargs, overrides kwargs)
+# (설명, 배점·등급 kwargs, overrides kwargs)
 SCHEMES: dict[str, tuple[str, dict, dict]] = {
     "current": ("현행 (D 반영본)", {}, {}),
     "-proportional": ("비례 배점을 계단으로 되돌림", {"proportional": False}, {}),
@@ -134,14 +138,18 @@ def main() -> int:
     cases = load_cases()
     graded: dict[str, dict[str, str]] = {}  # scheme -> case_id -> grade
 
-    for name, (_, score_kw, override_kw) in SCHEMES.items():
+    for name, (_, engine_kw, override_kw) in SCHEMES.items():
         graded[name] = {}
+        score_kw = dict(engine_kw)
+        floor = score_kw.pop("unknown_floor", True)
         for case in cases:
             payload = RiskAssessRequest(**case["payload"])
             checks = run_checks(payload)
             fired = overrides(checks, payload, **override_kw)
             s = score(checks, **score_kw)
-            graded[name][case["case_id"]] = "high_risk" if fired else _risk_grade(s)
+            graded[name][case["case_id"]] = (
+                "high_risk" if fired else grade(s, checks, unknown_floor=floor)
+            )
 
     # current가 실제 엔진과 어긋나면 이 스크립트의 복제 로직이 틀린 것이다
     for case in cases:

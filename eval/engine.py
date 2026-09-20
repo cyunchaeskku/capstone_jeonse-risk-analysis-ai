@@ -7,7 +7,7 @@
 from backend.app.main import (
     _collect_override_reasons,
     _compute_risk_score,
-    _risk_grade,
+    _grade_with_burden_floor,
     _run_deposit_to_market_check,
     _run_illegal_building_check,
     _run_jeonse_concentration_check,
@@ -57,12 +57,13 @@ def run_checks(payload: RiskAssessRequest) -> list[ListingCheckResult]:
 def assess(payload: RiskAssessRequest) -> dict:
     checks = run_checks(payload)
     score = _compute_risk_score(checks)
+    score_grade = _grade_with_burden_floor(score, checks)
     overrides = _collect_override_reasons(checks, payload)
     return {
         "checks": {c.code: c.status for c in checks},
         "reasons": {c.code: c.reason for c in checks},
         "score": score,
-        "score_grade": _risk_grade(score),
+        "score_grade": score_grade,
         "overrides": overrides,
-        "grade": "high_risk" if overrides else _risk_grade(score),
+        "grade": "high_risk" if overrides else score_grade,
     }

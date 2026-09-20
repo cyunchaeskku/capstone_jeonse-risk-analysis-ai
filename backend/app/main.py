@@ -1382,7 +1382,7 @@ _RISK_SCORE_MAX = 100
 _PROP_FLOOR = 0.6  # 비례 배점 시작. 이하는 0점
 _PROP_CEIL = 1.0  # 시세 전액. 이상은 만점
 _BURDEN_CODES = ("deposit_to_market_ratio", "mortgage_ratio", "senior_deposit")
-_UNKNOWN_FLOOR_SCORE = 15  # 담보 여력을 하나도 못 본 경우의 바닥 점수
+_BURDEN_FLOOR_GRADE = "caution"  # 담보 여력을 하나도 못 본 경우의 바닥 등급
 _COMBINED_OVERRIDE_THRESHOLD = 0.9  # R2-b 고위험 오버라이드
 _RISK_SCORE_RANGES = (
     {"min_score": 0, "max_score": 14, "grade": "safe"},
@@ -1449,12 +1449,13 @@ def _build_score_breakdown(checks: list[ListingCheckResult]) -> list[dict[str, i
 
 
 def _compute_risk_score(checks: list[ListingCheckResult]) -> int:
-    score = min(sum(_score_impact(check) for check in checks), _RISK_SCORE_MAX)
-    # §0-2. 담보 여력을 하나도 확인하지 못했으면 '안전'이라고 말하지 않는다.
+    return min(sum(_score_impact(check) for check in checks), _RISK_SCORE_MAX)
+
+
+def _has_burden_floor(checks: list[ListingCheckResult]) -> bool:
+    """담보 여력 규칙(R1·R2·R8)을 하나도 판정하지 못한 상태."""
     by_code = {check.code: check.status for check in checks}
-    if all(by_code.get(code) == "unknown" for code in _BURDEN_CODES):
-        return max(score, _UNKNOWN_FLOOR_SCORE)
-    return score
+    return all(by_code.get(code) == "unknown" for code in _BURDEN_CODES)
 
 
 def _calculate_jeonse_concentration(
@@ -2240,6 +2241,14 @@ def _risk_grade(score: int) -> str:
     return "safe"
 
 
+def _grade_with_burden_floor(score: int, checks: list[ListingCheckResult]) -> str:
+    """§0-2. 담보 여력을 하나도 확인하지 못했으면 '안전'이라고 말하지 않는다."""
+    grade = _risk_grade(score)
+    if grade == "safe" and _has_burden_floor(checks):
+        return _BURDEN_FLOOR_GRADE
+    return grade
+
+
 def _collect_override_reasons(
     checks: list[ListingCheckResult],
     payload: RiskAssessRequest,
@@ -2356,7 +2365,7 @@ async def assess_risk(
     ]
     summary = _summarize_check_overall(checks)
     risk_score = _compute_risk_score(checks)
-    score_grade = _risk_grade(risk_score)
+    score_grade = _grade_with_burden_floor(risk_score, checks)
     override_reasons = _collect_override_reasons(checks, payload)
     risk_grade = "high_risk" if override_reasons else score_grade
     explanation = await _generate_risk_assessment_explanation(
