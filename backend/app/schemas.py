@@ -1,40 +1,10 @@
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 RiskLevel = Literal["low", "medium", "high"]
-
-
-class PropertyInfo(BaseModel):
-    address: str = Field(..., description="Property address")
-    deposit_krw: int = Field(..., ge=0, description="Jeonse deposit amount in KRW")
-    monthly_rent_krw: int = Field(0, ge=0, description="Optional monthly rent in KRW")
-    building_type: str | None = Field(None, description="Apartment, villa, officetel, etc.")
-
-
-class ContractInfo(BaseModel):
-    landlord_name: str | None = None
-    contract_start_date: str | None = Field(None, description="YYYY-MM-DD")
-    contract_end_date: str | None = Field(None, description="YYYY-MM-DD")
-    special_terms: list[str] = Field(default_factory=list)
-
-
-class DocumentRef(BaseModel):
-    document_type: str = Field(..., description="contract, registry, id-card, etc.")
-    filename: str = Field(..., description="Original filename")
-
-
-class AnalysisCreateRequest(BaseModel):
-    property: PropertyInfo
-    contract: ContractInfo | None = None
-    documents: list[DocumentRef] = Field(default_factory=list)
-
-
-class AnalysisCreateResponse(BaseModel):
-    analysis_id: str
-    status: Literal["completed"]
-    normalized_summary: dict[str, object]
 
 
 class RegistryMaxClaimItem(BaseModel):
@@ -235,6 +205,25 @@ class RiskAssessResponse(BaseModel):
     risk_grade: RiskGrade
     override_reasons: list[str] = Field(default_factory=list)
     llm_explanation: str
+    # 저장된 분석 기록의 식별자. 기록 조회와 챗봇 컨텍스트 연결에 쓴다.
+    analysis_id: str
+
+
+class AnalysisListItem(BaseModel):
+    analysis_id: str
+    listing_name: str
+    deposit_krw: int
+    risk_grade: RiskGrade
+    risk_score: int
+    created_at: datetime
+
+
+class AnalysisRecordResponse(BaseModel):
+    analysis_id: str
+    listing_name: str
+    created_at: datetime
+    request: RiskAssessRequest
+    result: RiskAssessResponse
 
 
 class SignupRequest(BaseModel):

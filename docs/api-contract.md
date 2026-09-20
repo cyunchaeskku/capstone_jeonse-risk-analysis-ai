@@ -141,6 +141,15 @@
   - `candidates`
   - `candidates`는 스크롤 가능한 후보 목록 렌더링을 위한 요약 배열이다
 
+### `POST /building-register/inspect`
+
+- 목적: 정부24 건축물대장 PDF에서 R5·R6 확인값을 판독한다.
+- 요청: `multipart/form-data`의 PDF `file`.
+- 응답: `inspection`에 `main_use`, `detail_use`, `violation_status`, `households`,
+  `use_approval_date`, `floors`를 반환한다.
+- 제약: PDF 텍스트 레이어를 우선 사용하고, 없으면 비전 모델로 판독한다. 판독하지
+  못한 위반건축물 여부는 `unclear`로 반환하며 정상으로 간주하지 않는다.
+
 ### `POST /listing-checks/analyze`
 
 - 목적: 선택한 매물 정보 기준으로 규칙 기반 점검 결과와 설명을 반환한다

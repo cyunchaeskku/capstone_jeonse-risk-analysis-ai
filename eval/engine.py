@@ -22,7 +22,9 @@ from backend.app.schemas import ListingCheckResult, RiskAssessRequest
 
 def run_checks(payload: RiskAssessRequest) -> list[ListingCheckResult]:
     return [
-        _run_deposit_to_market_check(payload.deposit_krw, payload.market_price_krw),
+        _run_deposit_to_market_check(
+            payload.deposit_krw, payload.market_price_krw, payload.registry_type
+        ),
         _run_mortgage_ratio_check(
             payload.mortgage_items,
             payload.deposit_krw,

@@ -70,6 +70,19 @@ def get_current_user(session: UserSession = Depends(_current_session)) -> User:
     return session.user
 
 
+def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """비로그인도 허용하는 엔드포인트용. 토큰이 없거나 유효하지 않으면 401 대신 None."""
+    if credentials is None:
+        return None
+    try:
+        return _current_session(credentials, db).user
+    except HTTPException:
+        return None
+
+
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def signup(payload: SignupRequest, request: Request, db: Session = Depends(get_db)) -> User:
     # 가입도 같은 비용(64MiB)의 해시를 돌린다. 여기를 빼면 공격이 이쪽으로 옮겨온다.

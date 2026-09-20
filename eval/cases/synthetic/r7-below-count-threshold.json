@@ -6,7 +6,7 @@
     "grade": "safe",
     "rationale": "명세 R7은 건수와 비율을 모두 만족해야 warn. 2/5 = 40%로 비율은 넘지만 3건 미만이라 pass.",
     "checks": {
-      "deposit_to_market_ratio": "pass",
+      "deposit_to_market_ratio": "unknown",
       "mortgage_ratio": "unknown",
       "owner_mismatch": "pass",
       "rights_encumbrance": "pass",

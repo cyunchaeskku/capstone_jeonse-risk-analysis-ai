@@ -6,7 +6,7 @@
     "grade": "safe",
     "rationale": "명세 R7: `peak >= 3` 이고 `비율 >= 30%`면 warn. 25 // 2 = 12점. 등급 구간 0~14가 안전이라 R7 단독 warn은 안전을 벗어나지 못한다.",
     "checks": {
-      "deposit_to_market_ratio": "pass",
+      "deposit_to_market_ratio": "unknown",
       "mortgage_ratio": "unknown",
       "owner_mismatch": "pass",
       "rights_encumbrance": "pass",

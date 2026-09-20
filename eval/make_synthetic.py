@@ -45,7 +45,11 @@ BASE_CHECKS = {
 
 # 일반건물은 R2가 분모를 못 구해 unknown, R8은 선순위 보증금 입력에 따라 달라진다.
 GENERAL = {"registry_type": "general_building"}
-GENERAL_CHECKS = {"mortgage_ratio": "unknown", "senior_deposit": "unknown"}
+GENERAL_CHECKS = {
+    "deposit_to_market_ratio": "unknown",
+    "mortgage_ratio": "unknown",
+    "senior_deposit": "unknown",
+}
 
 CASES = [
     # ── R1 전세가율: ratio > 0.80 → fail ─────────────────────────────────

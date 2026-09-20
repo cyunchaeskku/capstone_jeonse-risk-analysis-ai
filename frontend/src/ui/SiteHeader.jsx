@@ -6,6 +6,8 @@ const navigationItems = [
   { label: '새 분석', to: '/analysis/new' },
   { label: '매물 점검', to: '/listing-check' },
   { label: '챗봇', to: '/chatbot' },
+  // 기록은 로그인해야 내용이 있다.
+  { label: '분석 기록', to: '/history', authOnly: true },
 ];
 
 function AuthMenu() {
@@ -42,6 +44,9 @@ function AuthMenu() {
 }
 
 function SiteHeader() {
+  const { user } = useAuth();
+  const items = navigationItems.filter((item) => !item.authOnly || user);
+
   return (
     <header className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-6 lg:px-10">
       <Link to="/" className="text-sm font-semibold tracking-[0.24em] text-coral uppercase">
@@ -49,7 +54,7 @@ function SiteHeader() {
       </Link>
       <div className="flex items-center gap-3">
         <nav className="flex gap-3 rounded-full border border-white/80 bg-white/70 p-2 shadow-sm backdrop-blur">
-          {navigationItems.map((item) => (
+          {items.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

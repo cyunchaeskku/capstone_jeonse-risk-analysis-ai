@@ -6,7 +6,7 @@
     "grade": "caution",
     "rationale": "명세 R8: (300+100+100)/600 = 0.833 > 0.80 → fail(25) → 주의(15~29). R1은 100/600 = 0.167로 pass.",
     "checks": {
-      "deposit_to_market_ratio": "pass",
+      "deposit_to_market_ratio": "unknown",
       "mortgage_ratio": "unknown",
       "owner_mismatch": "pass",
       "rights_encumbrance": "pass",

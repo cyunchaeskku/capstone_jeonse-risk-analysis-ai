@@ -6,7 +6,7 @@
     "grade": "safe",
     "rationale": "(200+100+100)/600 = 0.667 ≤ 0.80 → pass.",
     "checks": {
-      "deposit_to_market_ratio": "pass",
+      "deposit_to_market_ratio": "unknown",
       "mortgage_ratio": "unknown",
       "owner_mismatch": "pass",
       "rights_encumbrance": "pass",

@@ -6,7 +6,7 @@
     "grade": "safe",
     "rationale": "명세 R8: 선순위 보증금 미확보 → unknown. 다가구에서 가장 위험한 항목이 점수 0으로 빠지는 구조적 한계를 드러내는 케이스.",
     "checks": {
-      "deposit_to_market_ratio": "pass",
+      "deposit_to_market_ratio": "unknown",
       "mortgage_ratio": "unknown",
       "owner_mismatch": "pass",
       "rights_encumbrance": "pass",

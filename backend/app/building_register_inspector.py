@@ -53,7 +53,7 @@ BUILDING_REGISTER_SYSTEM_PROMPT = """
 
 함께 추출할 항목:
 - 명칭, 대지위치(지번주소), 도로명주소
-- 주용도, 세대수/가구수/호수
+- 주용도, 기타용도, 세대수/가구수/호수
 - 사용승인일 (YYYY-MM-DD 또는 원문 그대로)
 - 층별 건축물 현황: 층, 용도, 면적(㎡)
 - 그 밖의 기재사항, 변동사항 중 특이 문구
@@ -66,6 +66,7 @@ BUILDING_REGISTER_SYSTEM_PROMPT = """
   "lot_address": string | null,
   "road_address": string | null,
   "main_use": string | null,
+  "detail_use": string | null,
   "households": string | null,
   "use_approval_date": string | null,
   "floors": [{"floor": string, "use": string, "area_m2": number | null}],
@@ -188,6 +189,7 @@ def _coerce_payload(content: str, page_count: int) -> dict[str, Any]:
     payload.setdefault("lot_address", None)
     payload.setdefault("road_address", None)
     payload.setdefault("main_use", None)
+    payload.setdefault("detail_use", None)
     payload.setdefault("households", None)
     payload.setdefault("use_approval_date", None)
     payload.setdefault("floors", [])

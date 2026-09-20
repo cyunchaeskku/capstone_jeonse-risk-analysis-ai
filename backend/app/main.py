@@ -8,23 +8,28 @@ from pathlib import Path
 from datetime import date
 from typing import Any, Protocol
 from urllib.parse import unquote
+from uuid import uuid4
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from .auth import router as auth_router
+from .auth import get_current_user, get_optional_user, router as auth_router
 from .chatbot import ChatbotService
+from .db import get_db
+from .models import Analysis, User
 from .building_register_inspector import inspect_building_register_pdf
 from .registry_inspector import inspect_registry_text
 from .registry_parser import parse_registry_pdf
 from .schemas import (
-    AnalysisCreateRequest,
-    AnalysisCreateResponse,
     AnalysisDetailResponse,
+    AnalysisListItem,
+    AnalysisRecordResponse,
     HealthResponse,
     ListingCheckAnalyzeRequest,
     ListingCheckAnalyzeResponse,
@@ -37,9 +42,9 @@ from .schemas import (
     RegistryParseResponse,
     RiskAssessRequest,
     RiskAssessResponse,
+    RiskFactor,
     RootResponse,
 )
-from .services import AnalysisService
 from .settings import settings
 
 
@@ -61,7 +66,6 @@ app.add_middleware(
 
 app.include_router(auth_router)
 
-service = AnalysisService()
 chatbot_service = ChatbotService()
 
 _CSV_PATH = Path(__file__).parent.parent.parent / "data" / "address_code.csv"
@@ -447,11 +451,6 @@ def health_check() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@app.post("/analyses", response_model=AnalysisCreateResponse)
-def create_analysis(payload: AnalysisCreateRequest) -> AnalysisCreateResponse:
-    return service.create_analysis(payload)
-
-
 def _registry_max_claim_items(result) -> list[RegistryMaxClaimItem]:
     return [
         RegistryMaxClaimItem(
@@ -588,19 +587,53 @@ async def inspect_registry_document(file: UploadFile = File(...)) -> RegistryIns
     )
 
 
-@app.get("/analyses/{analysis_id}", response_model=AnalysisDetailResponse)
-def get_analysis(analysis_id: str) -> AnalysisDetailResponse:
-    item = service.get_analysis(analysis_id)
-    if item is None:
+@app.get("/analyses", response_model=list[AnalysisListItem])
+def list_analyses(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[AnalysisListItem]:
+    rows = db.scalars(
+        select(Analysis)
+        .where(Analysis.user_id == user.id)
+        .order_by(Analysis.created_at.desc())
+        .limit(50)
+    ).all()
+    return [
+        AnalysisListItem(
+            analysis_id=row.id,
+            listing_name=row.listing_name,
+            deposit_krw=row.deposit_krw,
+            risk_grade=row.risk_grade,
+            risk_score=row.risk_score,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+@app.get("/analyses/{analysis_id}", response_model=AnalysisRecordResponse)
+def get_analysis(
+    analysis_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AnalysisRecordResponse:
+    row = db.get(Analysis, analysis_id)
+    # 남의 기록과 익명 기록은 존재 자체를 알리지 않는다.
+    if row is None or row.user_id != user.id:
         raise HTTPException(
             status_code=404,
             detail={
                 "code": "ANALYSIS_NOT_FOUND",
-                "message": "해당 분석 요청을 찾을 수 없습니다.",
-                "action_hint": "분석 ID를 다시 확인하거나 새 분석을 생성하세요.",
+                "message": "해당 분석 기록을 찾을 수 없습니다.",
+                "action_hint": "기록 목록에서 다시 선택하거나 새 분석을 실행하세요.",
             },
         )
-    return item
+    return AnalysisRecordResponse(
+        analysis_id=row.id,
+        listing_name=row.listing_name,
+        created_at=row.created_at,
+        request=row.request,
+        result=row.result,
+    )
 
 
 @app.get("/geocode")
@@ -1287,7 +1320,23 @@ class MockMarketPriceProvider:
 market_price_provider: MarketPriceProvider = MockMarketPriceProvider()
 
 
-def _run_deposit_to_market_check(deposit_krw: int, market_price_krw: int) -> ListingCheckResult:
+def _run_deposit_to_market_check(
+    deposit_krw: int, market_price_krw: int, registry_type: str
+) -> ListingCheckResult:
+    # 다가구: 시세는 건물 전체, 보증금은 한 호실 → 비율이 구조적으로 낮아 항상 pass. 판정은 R8이 맡는다.
+    if registry_type == "general_building":
+        return ListingCheckResult(
+            code="deposit_to_market_ratio",
+            title="주택 시세 대비 보증금",
+            status="unknown",
+            reason="다가구·단독주택은 시세가 건물 전체 기준이라 내 보증금만으로는 전세가율을 판정할 수 없습니다. 선순위 보증금을 합산한 부담률로 판정합니다.",
+            evidence={
+                "deposit_krw": deposit_krw,
+                "market_price_krw": market_price_krw,
+                "registry_type": registry_type,
+            },
+        )
+
     if market_price_krw <= 0:
         return ListingCheckResult(
             code="deposit_to_market_ratio",
@@ -1711,7 +1760,7 @@ async def analyze_listing_checks(payload: ListingCheckAnalyzeRequest) -> Listing
     market_price_krw = await market_price_provider.get_market_price_krw(payload)
     recent_transactions = (payload.extra_signals or {}).get("recent_transactions") or []
     checks = [
-        _run_deposit_to_market_check(payload.deposit_krw, market_price_krw),
+        _run_deposit_to_market_check(payload.deposit_krw, market_price_krw, "unknown"),  # 등기 유형 미수집
         _run_residential_use_check(payload.selected_building),
         _run_duplicate_contract_check(payload.listing_name, recent_transactions),
     ]
@@ -1725,9 +1774,34 @@ async def analyze_listing_checks(payload: ListingCheckAnalyzeRequest) -> Listing
     )
 
 
+_GRADE_TO_RISK_LEVEL = {"safe": "low", "caution": "medium", "risk": "high", "high_risk": "high"}
+_CHECK_STATUS_TO_RISK_LEVEL = {"fail": "high", "warn": "medium", "pass": "low", "unknown": "medium"}
+
+
+def _chat_analysis_context(row: Analysis) -> AnalysisDetailResponse:
+    """저장된 분석을 챗봇이 기대하는 형태로 옮긴다."""
+    return AnalysisDetailResponse(
+        analysis_id=row.id,
+        status="completed",
+        overall_risk=_GRADE_TO_RISK_LEVEL[row.risk_grade],
+        risk_factors=[
+            RiskFactor(
+                code=check["code"],
+                title=check["title"],
+                level=_CHECK_STATUS_TO_RISK_LEVEL[check["status"]],
+                detail=check["reason"],
+            )
+            for check in row.result.get("checks", [])
+        ],
+        explanation=row.result.get("llm_explanation", ""),
+        references=[],
+    )
+
+
 @app.post("/qa")
-async def answer_question(payload: QaRequest) -> StreamingResponse:
-    analysis = service.get_analysis(payload.analysis_id) if payload.analysis_id else None
+async def answer_question(payload: QaRequest, db: Session = Depends(get_db)) -> StreamingResponse:
+    row = db.get(Analysis, payload.analysis_id) if payload.analysis_id else None
+    analysis = _chat_analysis_context(row) if row else None
     if not settings.openai_api_key or not settings.openai_api_key.strip():
         raise HTTPException(
             status_code=503,
@@ -2194,12 +2268,18 @@ async def _generate_risk_assessment_explanation(
 
 
 @app.post("/risk/assess", response_model=RiskAssessResponse)
-async def assess_risk(payload: RiskAssessRequest) -> RiskAssessResponse:
+async def assess_risk(
+    payload: RiskAssessRequest,
+    user: User | None = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> RiskAssessResponse:
     if payload.deposit_krw <= 0:
         raise HTTPException(status_code=400, detail="deposit_krw는 0보다 커야 합니다.")
 
     checks = [
-        _run_deposit_to_market_check(payload.deposit_krw, payload.market_price_krw),
+        _run_deposit_to_market_check(
+            payload.deposit_krw, payload.market_price_krw, payload.registry_type
+        ),
         _run_mortgage_ratio_check(
             payload.mortgage_items,
             payload.deposit_krw,
@@ -2235,7 +2315,7 @@ async def assess_risk(payload: RiskAssessRequest) -> RiskAssessResponse:
     explanation = await _generate_risk_assessment_explanation(
         payload, checks, summary, risk_score, risk_grade, override_reasons
     )
-    return RiskAssessResponse(
+    response = RiskAssessResponse(
         checks=checks,
         summary=summary,
         risk_score=risk_score,
@@ -2246,4 +2326,20 @@ async def assess_risk(payload: RiskAssessRequest) -> RiskAssessResponse:
         risk_grade=risk_grade,
         override_reasons=override_reasons,
         llm_explanation=explanation,
+        analysis_id=str(uuid4()),
     )
+    db.add(
+        Analysis(
+            id=response.analysis_id,
+            user_id=user.id if user else None,
+            listing_name=payload.listing_name[:200],
+            deposit_krw=payload.deposit_krw,
+            market_price_krw=payload.market_price_krw,
+            risk_grade=risk_grade,
+            risk_score=risk_score,
+            request=payload.model_dump(mode="json"),
+            result=response.model_dump(mode="json"),
+        )
+    )
+    db.commit()
+    return response

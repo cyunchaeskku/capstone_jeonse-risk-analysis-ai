@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { useAuth } from '../context/AuthContext';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -48,17 +49,17 @@ const STEPS = [
   },
   {
     id: 'R5',
-    source: 'A',
-    title: '건축물 용도',
+    source: 'B',
+    title: '건축물대장 업로드',
     code: 'residential_use',
-    criterion: '주용도에 주거 관련 용도가 없으면 위험',
+    criterion: '정부24에서 발급한 건축물대장 PDF를 업로드합니다.',
   },
   {
     id: 'R6',
     source: 'C',
-    title: '위반건축물',
+    title: '건축물대장 판독 결과',
     code: 'illegal_building',
-    criterion: '건축물대장 위반건축물 표시 → 위험 (보증보험 거절 사유)',
+    criterion: '주용도·기타용도와 위반건축물 표시를 확인합니다.',
   },
   {
     id: 'R7',
@@ -117,14 +118,14 @@ const VIOLATION_META = {
   unclear: { label: '판독 불가 — 직접 확인 필요', tone: 'text-slate-700' },
 };
 
-const GRADE_META = {
+export const GRADE_META = {
   safe: { label: '안전', tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
   caution: { label: '주의', tone: 'text-amber-700 bg-amber-50 border-amber-200' },
   risk: { label: '위험', tone: 'text-orange-700 bg-orange-50 border-orange-200' },
   high_risk: { label: '고위험', tone: 'text-red-700 bg-red-50 border-red-200' },
 };
 
-const STATUS_META = {
+export const STATUS_META = {
   pass: { label: '통과', tone: 'bg-emerald-50 text-emerald-700' },
   warn: { label: '주의', tone: 'bg-amber-50 text-amber-700' },
   fail: { label: '위험', tone: 'bg-red-50 text-red-700' },
@@ -209,6 +210,7 @@ const inputClass =
   'mt-2 w-full rounded-2xl border border-coral/20 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-sage/60';
 
 function AnalysisNewPage() {
+  const { token } = useAuth();
   const [stepIndex, setStepIndex] = useState(0);
   const [form, setForm] = useState(INITIAL_FORM);
   const [registry, setRegistry] = useState(null);
@@ -231,7 +233,7 @@ function AnalysisNewPage() {
   const [lookupState, setLookupState] = useState('idle');
   const [lookupError, setLookupError] = useState('');
 
-  // R6 건축물대장 — 위반건축물 표시는 공공 API에 없어 대장 원본을 판독해야 한다.
+  // R5 건축물대장 업로드 — PDF 판독값은 R6에서 사용자가 확인·수정한다.
   const [ledger, setLedger] = useState(null);
   const [ledgerFileName, setLedgerFileName] = useState('');
   const [ledgerStatus, setLedgerStatus] = useState('idle');
@@ -261,7 +263,7 @@ function AnalysisNewPage() {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  // R5·R7은 R1에서 이미 받아온 건축물대장·실거래가로 채워진다. 다시 묻지 않는다.
+  // R7은 R1에서 받은 실거래가를 사용한다.
   const selectedBuilding = lookup?.building?.selected ?? null;
   const residentialUseText = `${form.buildingType} ${form.detailUse}`.trim();
   const isResidentialUse = residentialUseText
@@ -354,8 +356,6 @@ function AnalysisNewPage() {
       }
       const building = payload.building?.selected ?? null;
       update('listingName', building?.building_name || place.title);
-      if (building?.building_type) update('buildingType', building.building_type);
-      if (building?.detail_use) update('detailUse', building.detail_use);
       const jeonseCount = (payload.rent?.items ?? []).filter(
         (item) => toKrw(item?.monthlyRent) === 0,
       ).length;
@@ -435,7 +435,10 @@ function AnalysisNewPage() {
       }
       setLedger(payload);
       setLedgerStatus('done');
-      update('illegalBuildingStatus', payload.inspection?.violation_status ?? 'unclear');
+      const ledgerInspection = payload.inspection ?? {};
+      if (ledgerInspection.main_use) update('buildingType', ledgerInspection.main_use);
+      if (ledgerInspection.detail_use) update('detailUse', ledgerInspection.detail_use);
+      update('illegalBuildingStatus', ledgerInspection.violation_status ?? 'unclear');
     } catch (error) {
       setLedgerStatus('idle');
       setLedgerError(error instanceof Error ? error.message : '건축물대장 판독에 실패했습니다.');
@@ -464,7 +467,11 @@ function AnalysisNewPage() {
     try {
       const response = await fetch(`${API_BASE}/risk/assess`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // 로그인 상태면 분석 기록이 계정에 남는다. 비로그인이면 익명으로 저장된다.
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           listing_name: form.listingName.trim(),
           deposit_krw: toKrw(form.depositKrw),
@@ -550,9 +557,13 @@ function AnalysisNewPage() {
           <span className="rounded-full bg-coral/10 px-3 py-1 text-xs font-semibold text-coral">
             {step.id} · {step.id === 'R4'
               ? '자동 확인'
-              : ((step.id === 'R5' && !selectedBuilding) || (step.id === 'R7' && !lookup)
-                ? '직접 입력'
-                : SOURCE_LABEL[step.source])}
+              : step.id === 'R5'
+                ? 'PDF 업로드'
+                : step.id === 'R6'
+                  ? '판독 결과 확인'
+                  : (step.id === 'R7' && !lookup)
+                    ? '직접 입력'
+                    : SOURCE_LABEL[step.source]}
           </span>
           <span className="text-xs text-slate-400">
             {stepIndex + 1} / {STEPS.length}
@@ -868,85 +879,10 @@ function AnalysisNewPage() {
 
           {step.id === 'R5' && (
             <>
-              {selectedBuilding ? (
-                <div className="space-y-4">
-                  <p className="rounded-2xl bg-slate-50 px-5 py-4 text-sm leading-6 text-slate-600">
-                    R1에서 조회한 건축물대장 정보를 자동으로 가져왔습니다. 이 단계에서 추가로 입력할 내용은 없습니다.
-                  </p>
-                  <div className="rounded-2xl border border-coral/20 bg-cream/40 p-4">
-                    <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
-                      건축물대장 자동 조회
-                    </span>
-                    <p className="mt-2 text-sm text-slate-600">주용도</p>
-                    <p className="text-lg font-semibold text-slate-900">{form.buildingType || '-'}</p>
-                    <p className="mt-3 text-sm text-slate-600">기타용도</p>
-                    <p className="text-lg font-semibold text-slate-900">{form.detailUse || '-'}</p>
-                    <p className="mt-3 text-xs text-slate-500">
-                      R1에서 조회한 {selectedBuilding.building_name} 건축물대장에서 가져온 값입니다.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <Field label="건축물 주용도" hint="건축물대장이 조회되지 않아 직접 입력합니다.">
-                    <input
-                      className={inputClass}
-                      value={form.buildingType}
-                      onChange={(event) => update('buildingType', event.target.value)}
-                      placeholder="예) 공동주택"
-                    />
-                  </Field>
-                  <Field label="기타용도 (상세)">
-                    <input
-                      className={inputClass}
-                      value={form.detailUse}
-                      onChange={(event) => update('detailUse', event.target.value)}
-                      placeholder="예) 다세대주택 / 제2종근린생활시설(고시원)"
-                    />
-                  </Field>
-                </>
-              )}
-
-              {isResidentialUse === true && (
-                <div className="flex gap-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-5">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-lg font-bold text-white">
-                    ✓
-                  </span>
-                  <div>
-                    <p className="font-semibold text-emerald-900">주거 관련 용도가 확인되었습니다</p>
-                    <p className="mt-1 text-sm leading-6 text-emerald-800">
-                      주용도 또는 기타용도에 주거 관련 용도가 포함되어 있어 R5 기준을 통과합니다.
-                    </p>
-                    <p className="mt-2 text-sm font-semibold text-emerald-900">다음 단계로 넘어가도 됩니다.</p>
-                  </div>
-                </div>
-              )}
-
-              {isResidentialUse === false && (
-                <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-5">
-                  <p className="font-semibold text-red-900">주거용 건물로 확인되지 않습니다</p>
-                  <p className="mt-1 text-sm leading-6 text-red-800">
-                    입력된 건축물 용도에서 주거 관련 용어를 찾지 못했습니다. 계약 전에 실제 용도를 확인하세요.
-                  </p>
-                </div>
-              )}
-            </>
-          )}
-
-          {step.id === 'R6' && (
-            <>
-              <input
-                ref={ledgerInputRef}
-                type="file"
-                accept="application/pdf"
-                className="hidden"
-                onChange={handleLedgerUpload}
-              />
+              <input ref={ledgerInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleLedgerUpload} />
               <div className="rounded-2xl border border-dashed border-coral/40 bg-white p-6 text-center">
                 <p className="text-sm leading-6 text-slate-600">
-                  위반건축물 표시는 건축물대장 공공 API에 없어 대장 원본을 봐야 합니다.
-                  <br />
-                  정부24에서 발급한 건축물대장 PDF를 올리면 AI가 판독합니다.
+                  건축물대장 PDF를 올리면 다음 단계에서 주용도·기타용도와 위반건축물 표시를 판독합니다.
                 </p>
                 <button
                   type="button"
@@ -956,14 +892,13 @@ function AnalysisNewPage() {
                 >
                   {ledgerStatus === 'uploading' ? '판독 중…' : '건축물대장 PDF 업로드'}
                 </button>
-                {ledgerFileName && (
-                  <p className="mt-3 text-xs text-slate-500">{ledgerFileName}</p>
+                {ledgerFileName && <p className="mt-3 text-xs text-slate-500">{ledgerFileName}</p>}
+                {ledgerStatus === 'done' && (
+                  <p className="mt-3 text-sm font-medium text-emerald-700">업로드했습니다. 다음 단계에서 판독 결과를 확인하세요.</p>
                 )}
                 <div className="mt-5 border-t border-coral/15 pt-4">
                   <p className="text-sm font-semibold text-ink">건축물대장이 없나요?</p>
-                  <p className="mt-1 text-xs leading-5 text-slate-500">
-                    정부24에서 건축물대장 등본(초본)을 발급·열람할 수 있습니다.
-                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">정부24에서 건축물대장 등본(초본)을 발급·열람할 수 있습니다.</p>
                   <a
                     href="https://www.gov.kr/mw/AA020InfoCappView.do?CappBizCD=15000000098"
                     target="_blank"
@@ -974,11 +909,12 @@ function AnalysisNewPage() {
                   </a>
                 </div>
               </div>
+              {ledgerError && <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{ledgerError}</p>}
+            </>
+          )}
 
-              {ledgerError && (
-                <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{ledgerError}</p>
-              )}
-
+          {step.id === 'R6' && (
+            <>
               {ledger?.inspection && (
                 <div className="rounded-2xl border border-coral/20 bg-cream/40 p-4">
                   <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
@@ -1001,6 +937,8 @@ function AnalysisNewPage() {
                     <dd className="text-slate-900">{ledger.inspection.lot_address ?? '-'}</dd>
                     <dt className="text-slate-500">주용도</dt>
                     <dd className="text-slate-900">{ledger.inspection.main_use ?? '-'}</dd>
+                    <dt className="text-slate-500">기타용도</dt>
+                    <dd className="text-slate-900">{ledger.inspection.detail_use ?? '-'}</dd>
                     <dt className="text-slate-500">세대수</dt>
                     <dd className="text-slate-900">{ledger.inspection.households ?? '-'}</dd>
                   </dl>
@@ -1034,6 +972,46 @@ function AnalysisNewPage() {
                       </table>
                     </div>
                   )}
+                </div>
+              )}
+
+              {!ledger?.inspection && (
+                <p className="rounded-2xl bg-slate-100 px-4 py-3 text-sm leading-6 text-slate-600">
+                  R5에서 건축물대장 PDF를 올리지 않았습니다. 아래에서 직접 확인한 내용을 입력하거나 비워 두면 판단 불가로 남습니다.
+                </p>
+              )}
+
+              <Field label="건축물 주용도" hint="PDF 판독값이 있으면 가져옵니다. 원본과 다르면 수정하세요.">
+                <input
+                  className={inputClass}
+                  value={form.buildingType}
+                  onChange={(event) => update('buildingType', event.target.value)}
+                  placeholder="예) 공동주택"
+                />
+              </Field>
+              <Field label="기타용도 (상세)">
+                <input
+                  className={inputClass}
+                  value={form.detailUse}
+                  onChange={(event) => update('detailUse', event.target.value)}
+                  placeholder="예) 다세대주택 / 제2종근린생활시설(고시원)"
+                />
+              </Field>
+
+              {isResidentialUse === true && (
+                <div className="flex gap-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-lg font-bold text-white">✓</span>
+                  <div>
+                    <p className="font-semibold text-emerald-900">주거 관련 용도가 확인되었습니다</p>
+                    <p className="mt-1 text-sm leading-6 text-emerald-800">주용도 또는 기타용도에 주거 관련 용도가 포함되어 있어 R5 기준을 통과합니다.</p>
+                  </div>
+                </div>
+              )}
+
+              {isResidentialUse === false && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-5">
+                  <p className="font-semibold text-red-900">주거용 건물로 확인되지 않습니다</p>
+                  <p className="mt-1 text-sm leading-6 text-red-800">입력된 건축물 용도에서 주거 관련 용어를 찾지 못했습니다. 계약 전에 실제 용도를 확인하세요.</p>
                 </div>
               )}
 

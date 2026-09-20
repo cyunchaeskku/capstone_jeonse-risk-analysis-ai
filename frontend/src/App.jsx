@@ -4,6 +4,7 @@ import { ChatbotProvider } from './context/ChatbotContext';
 import AppShell from './layout/AppShell';
 import AnalysisNewPage from './pages/AnalysisNewPage';
 import ChatbotPage from './pages/ChatbotPage';
+import HistoryPage from './pages/HistoryPage';
 import HomePage from './pages/HomePage';
 import ListingCheckPage from './pages/ListingCheckPage';
 import LoginPage from './pages/LoginPage';
@@ -18,6 +19,7 @@ function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/analysis/new" element={<AnalysisNewPage />} />
             <Route path="/chatbot" element={<ChatbotPage />} />
+            <Route path="/history" element={<HistoryPage />} />
             <Route path="/listing-check" element={<ListingCheckPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignupPage />} />
