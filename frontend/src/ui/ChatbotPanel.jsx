@@ -86,6 +86,7 @@ function ChatbotPanel({
     error,
     isSending,
     messages,
+    resetChat,
     sendMessage,
     setDraftMessage,
   } = useChatbot();
@@ -133,6 +134,15 @@ function ChatbotPanel({
           {description ? <p className="mt-1 text-xs text-slate-500">{description}</p> : null}
         </div>
         <div className="flex items-center gap-2">
+          {messages.length > 1 ? (
+            <button
+              type="button"
+              onClick={resetChat}
+              className="rounded-full border border-coral/20 px-3 py-1 text-sm font-medium text-slate-600 transition hover:border-coral/40 hover:text-ink"
+            >
+              새 대화
+            </button>
+          ) : null}
           {showFullscreenButton ? (
             <button
               type="button"

@@ -1,8 +1,11 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 const ChatbotContext = createContext(null);
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 const HISTORY_TURN_LIMIT = 2;
+const STORAGE_KEY = 'jeonse_chat_v1';
+// sources에 법령 원문이 들어가 대화가 길어지면 용량이 커진다. 최근 것만 남긴다.
+const STORED_MESSAGE_LIMIT = 50;
 const timestampFormatter = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'Asia/Seoul',
   hour: '2-digit',
@@ -22,6 +25,17 @@ const initialMessages = [
     timestamp: formatTimestamp(),
   },
 ];
+
+// 새로고침으로 대화가 통째로 날아가지 않게 한다. 이 단말에만 남고 서버와는 무관하다.
+function loadStoredChat() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    return parsed?.messages?.length ? parsed : null;
+  } catch {
+    // 시크릿 모드나 사이트 데이터 차단
+    return null;
+  }
+}
 
 function toRecentHistory(messages) {
   const conversationalMessages = messages.filter(
@@ -61,13 +75,24 @@ function parseSseEvent(rawEvent) {
 
 export function ChatbotProvider({ children }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState(initialMessages);
+  const [messages, setMessages] = useState(() => loadStoredChat()?.messages ?? initialMessages);
   const [draftMessage, setDraftMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState(null);
   // 어느 분석에 대한 질문인지는 사용자가 직접 고른다. 최근 기록을 자동으로
   // 붙이면 다른 매물을 근거로 답할 수 있다. { analysisId, listingName }
-  const [activeAnalysis, setActiveAnalysis] = useState(null);
+  const [activeAnalysis, setActiveAnalysis] = useState(() => loadStoredChat()?.activeAnalysis ?? null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ messages: messages.slice(-STORED_MESSAGE_LIMIT), activeAnalysis }),
+      );
+    } catch {
+      // 용량 초과나 저장 차단. 저장 실패가 대화를 막을 이유는 없다.
+    }
+  }, [messages, activeAnalysis]);
 
   const openChat = () => setIsOpen(true);
   const closeChat = () => setIsOpen(false);
@@ -180,6 +205,13 @@ export function ChatbotProvider({ children }) {
     }
   };
 
+  // 새로고침이 더 이상 대화를 비우지 않으므로 초기화 수단이 필요하다.
+  const resetChat = () => {
+    setMessages(initialMessages);
+    setActiveAnalysis(null);
+    setError(null);
+  };
+
   const askAboutAnalysis = (analysisId, listingName) => {
     setActiveAnalysis({ analysisId, listingName });
     setIsOpen(true);
@@ -197,6 +229,7 @@ export function ChatbotProvider({ children }) {
       isSending,
       messages,
       openChat,
+      resetChat,
       sendMessage,
       setDraftMessage,
       toggleChat,
