@@ -18,6 +18,7 @@
 | `ingest_precedents.py` | 판례 전문 JSONL을 파싱해 `precedents` 테이블에 적재 |
 | `redeploy_backend.sh` | 백엔드 이미지 빌드(Cloud Build, 인덱스는 GCS에서) 후 Cloud Run 재배포 |
 | `upload_vectordb.sh` | `vectorDB/` 인덱스를 GCS 버킷에 업로드. `make_vectorDB_*.py` 실행 후 |
+| `inspect_gcs_bucket.ipynb` | 인덱스 버킷의 폴더/파일 구조를 JSON으로 출력 |
 | `db_session.sh` | Cloud SQL Auth Proxy(`localhost:5433`) 실행. 인스턴스는 상시 가동이라 켜고 끄지 않는다 |
 | `upload_secrets.py` | `.env`의 API 키를 Secret Manager에 등록 (값 출력 안 함) |
 
