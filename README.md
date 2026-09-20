@@ -88,6 +88,8 @@ http://localhost:8000
 |---|---|---|
 | Frontend | Vercel | `https://capstone-jeonse-risk-analysis-ai.vercel.app` |
 | Backend | GCP Cloud Run (서울) | `https://jeonse-backend-209169324729.asia-northeast3.run.app` |
+| RDB (법령·판례 원본) | GCP Cloud SQL PostgreSQL 16 (서울) | 평소 중지. `bash scripts/db_session.sh`로 시작·접속 |
+| FAISS 인덱스 | GCP Cloud Storage (서울, 버전 관리) | `gs://project-1bbc94dc-a155-4b6b-8a5-vectordb` |
 
 ### 재배포
 
@@ -102,7 +104,8 @@ bash scripts/redeploy_backend.sh demo-day   # 태그 직접 지정
 
 기본 태그는 커밋 해시다. 커밋 안 된 변경이 있으면 `-dirty-<시각>`이 붙는다. 같은 태그로 다시 빌드하면 태그가 새 이미지로 옮겨 간다.
 
-- `vectorDB/`는 gitignore 대상이라 로컬에 있는 인덱스가 이미지에 들어간다. 인덱스를 다시 만들었으면 위 명령으로 재배포한다.
+- FAISS 인덱스는 GCS 버킷(`gs://project-1bbc94dc-a155-4b6b-8a5-vectordb`)이 원본이다. Cloud Build가 빌드할 때 버킷에서 받아 이미지에 넣는다 (`cloudbuild.yaml`).
+- 인덱스를 다시 만들었으면 `bash scripts/upload_vectordb.sh`로 올린 뒤 재배포한다. 로컬 인덱스가 버킷과 다르면 재배포 스크립트가 멈춘다.
 - 빌드 업로드 대상은 `.gcloudignore`, 이미지 포함 대상은 `.dockerignore`가 정한다.
 - 패키지를 추가했으면 `.venv/bin/pip freeze`로 `requirements.txt`를 다시 고정한다.
 

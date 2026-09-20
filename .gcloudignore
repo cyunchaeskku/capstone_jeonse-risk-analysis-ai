@@ -1,6 +1,7 @@
-# gcloud builds submit 업로드 제외 목록.
-# 이 파일이 없으면 gcloud가 .gitignore를 따라 vectorDB/를 빼버린다.
+# gcloud builds submit 업로드 제외 목록. 이 파일이 없으면 gcloud가 .gitignore를 따른다.
 # 이미지에 들어갈 파일은 .dockerignore가 다시 거른다.
+# FAISS 인덱스는 cloudbuild.yaml이 GCS에서 받으므로 로컬 vectorDB/는 올리지 않는다.
+vectorDB/
 .git/
 .gitignore
 .env

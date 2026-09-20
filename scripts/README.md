@@ -16,7 +16,9 @@
 | `classify_precedent_relevance.py` | 판례 요약을 LLM에 읽혀 전세사기 관련성(`core`/`related`/`unrelated`) 분류 |
 | `collect_precedent_texts.py` | 분류 결과에서 선별한 판례의 전문 수집 (기본 `core`) |
 | `ingest_precedents.py` | 판례 전문 JSONL을 파싱해 `precedents` 테이블에 적재 |
-| `redeploy_backend.sh` | 백엔드 이미지 빌드(Cloud Build) 후 Cloud Run 재배포 |
+| `redeploy_backend.sh` | 백엔드 이미지 빌드(Cloud Build, 인덱스는 GCS에서) 후 Cloud Run 재배포 |
+| `upload_vectordb.sh` | `vectorDB/` 인덱스를 GCS 버킷에 업로드. `make_vectorDB_*.py` 실행 후 |
+| `db_session.sh` | Cloud SQL 인스턴스 시작 + Auth Proxy(`localhost:5433`) 실행, Ctrl+C 시 인스턴스 중지 |
 | `upload_secrets.py` | `.env`의 API 키를 Secret Manager에 등록 (값 출력 안 함) |
 
 ---
@@ -27,9 +29,11 @@ korean-law CLI를 통해 법령 전문을 가져와 PostgreSQL DB에 저장한�
 
 ### 전제 조건
 
-- Docker 컨테이너 실행 중 (`docker compose -f RDB/docker-compose.yml up -d`)
+- Cloud SQL 세션 실행 중 (`bash scripts/db_session.sh`, 다른 터미널에서 유지)
 - Alembic 마이그레이션 적용 완료 (`alembic -c RDB/alembic.ini upgrade head`)
 - `.venv` 활성화 상태
+
+DB를 쓰는 다른 스크립트(`make_vectorDB_*.py`, `ingest_precedents.py`)도 같은 세션이 필요하다.
 
 ### 실행
 
@@ -165,6 +169,8 @@ python scripts/make_vectorDB_laws.py --append
 
 기본 출력 경로: `vectorDB/laws_faiss/`
 
+인덱스를 만든 뒤 `bash scripts/upload_vectordb.sh`로 GCS에 올린다. 배포 이미지는 GCS의 인덱스로 빌드된다. `--append`는 로컬 `documents.jsonl`을 읽으므로, 로컬에 인덱스가 없으면 먼저 `gcloud storage cp -r gs://project-1bbc94dc-a155-4b6b-8a5-vectordb/laws_faiss vectorDB/`로 받는다.
+
 - `index.faiss`
 - `index.pkl` (LangChain docstore)
 - `documents.jsonl`
@@ -222,7 +228,7 @@ python scripts/make_vectorDB_precedents.py --label core --label related --chunk-
 
 ### 출력
 
-기본 출력 경로: `vectorDB/precedents_faiss/` (파일 구성은 법령 인덱스와 동일)
+기본 출력 경로: `vectorDB/precedents_faiss/` (파일 구성은 법령 인덱스와 동일). 만든 뒤 `bash scripts/upload_vectordb.sh`로 GCS에 올린다.
 
 ### 메타데이터 핵심 필드
 

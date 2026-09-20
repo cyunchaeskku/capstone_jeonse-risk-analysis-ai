@@ -1,0 +1,13 @@
+# 백엔드 이미지 빌드. scripts/redeploy_backend.sh가 _IMAGE, _BUCKET을 넘긴다.
+# FAISS 인덱스는 로컬이 아니라 GCS 버킷에서 받아 이미지에 넣는다 (.gcloudignore가 로컬 vectorDB/를 뺀다).
+steps:
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - mkdir -p vectorDB && gcloud storage cp -r gs://${_BUCKET}/laws_faiss gs://${_BUCKET}/precedents_faiss vectorDB/
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -t, "${_IMAGE}", .]
+images: ["${_IMAGE}"]
+options:
+  logging: CLOUD_LOGGING_ONLY
