@@ -65,6 +65,9 @@ export function ChatbotProvider({ children }) {
   const [draftMessage, setDraftMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState(null);
+  // 어느 분석에 대한 질문인지는 사용자가 직접 고른다. 최근 기록을 자동으로
+  // 붙이면 다른 매물을 근거로 답할 수 있다. { analysisId, listingName }
+  const [activeAnalysis, setActiveAnalysis] = useState(null);
 
   const openChat = () => setIsOpen(true);
   const closeChat = () => setIsOpen(false);
@@ -101,6 +104,7 @@ export function ChatbotProvider({ children }) {
         body: JSON.stringify({
           question: trimmed,
           history,
+          analysis_id: activeAnalysis?.analysisId ?? null,
         }),
       });
 
@@ -176,8 +180,16 @@ export function ChatbotProvider({ children }) {
     }
   };
 
+  const askAboutAnalysis = (analysisId, listingName) => {
+    setActiveAnalysis({ analysisId, listingName });
+    setIsOpen(true);
+  };
+
   const value = useMemo(
     () => ({
+      activeAnalysis,
+      askAboutAnalysis,
+      clearActiveAnalysis: () => setActiveAnalysis(null),
       closeChat,
       draftMessage,
       error,
@@ -189,7 +201,7 @@ export function ChatbotProvider({ children }) {
       setDraftMessage,
       toggleChat,
     }),
-    [draftMessage, error, isOpen, isSending, messages],
+    [activeAnalysis, draftMessage, error, isOpen, isSending, messages],
   );
 
   return <ChatbotContext.Provider value={value}>{children}</ChatbotContext.Provider>;

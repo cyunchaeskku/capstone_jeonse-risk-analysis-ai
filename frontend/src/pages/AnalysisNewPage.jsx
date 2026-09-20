@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useAuth } from '../context/AuthContext';
+import { useChatbot } from '../context/ChatbotContext';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -530,7 +531,7 @@ function AnalysisNewPage() {
   }
 
   if (result) {
-    return <ResultView result={result} onRestart={restart} />;
+    return <ResultView result={result} listingName={form.listingName.trim()} onRestart={restart} />;
   }
 
   return (
@@ -1271,7 +1272,8 @@ function ScoreGuide({ result }) {
   );
 }
 
-function ResultView({ result, onRestart }) {
+function ResultView({ result, listingName, onRestart }) {
+  const { askAboutAnalysis } = useChatbot();
   const unknownChecks = result.checks.filter((check) => check.status === 'unknown');
   const scoreMax = result.score_max ?? 100;
   const scoreGrade = result.score_grade ?? result.risk_grade;
@@ -1354,13 +1356,24 @@ function ResultView({ result, onRestart }) {
             </section>
           )}
 
-          <button
-            type="button"
-            onClick={onRestart}
-            className="mt-8 w-full rounded-full bg-ink px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#0f523d]"
-          >
-            새 분석 시작
-          </button>
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            {result.analysis_id ? (
+              <button
+                type="button"
+                onClick={() => askAboutAnalysis(result.analysis_id, listingName)}
+                className="w-full rounded-full border border-ink px-6 py-3 text-sm font-semibold text-ink transition hover:bg-ink/5"
+              >
+                이 결과로 질문하기
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onRestart}
+              className="w-full rounded-full bg-ink px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#0f523d]"
+            >
+              새 분석 시작
+            </button>
+          </div>
         </div>
 
         <ScoreGuide result={result} />

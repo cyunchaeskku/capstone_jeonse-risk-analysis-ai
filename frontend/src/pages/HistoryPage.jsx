@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { useAuth } from '../context/AuthContext';
+import { useChatbot } from '../context/ChatbotContext';
 import { GRADE_META, STATUS_META } from './AnalysisNewPage';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
@@ -19,6 +20,7 @@ function formatDate(value) {
 }
 
 function RecordDetail({ record }) {
+  const { askAboutAnalysis } = useChatbot();
   const result = record.result;
   const grade = GRADE_META[result.risk_grade] ?? GRADE_META.safe;
 
@@ -57,6 +59,14 @@ function RecordDetail({ record }) {
           <ReactMarkdown>{result.llm_explanation}</ReactMarkdown>
         </div>
       ) : null}
+
+      <button
+        type="button"
+        onClick={() => askAboutAnalysis(record.analysis_id, record.listing_name)}
+        className="mt-5 rounded-full border border-ink px-5 py-2 text-sm font-semibold text-ink transition hover:bg-ink/5"
+      >
+        이 결과로 질문하기
+      </button>
     </div>
   );
 }

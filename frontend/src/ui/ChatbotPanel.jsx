@@ -79,7 +79,16 @@ function ChatbotPanel({
   showFullscreenButton = false,
   showCloseButton = false,
 }) {
-  const { draftMessage, error, isSending, messages, sendMessage, setDraftMessage } = useChatbot();
+  const {
+    activeAnalysis,
+    clearActiveAnalysis,
+    draftMessage,
+    error,
+    isSending,
+    messages,
+    sendMessage,
+    setDraftMessage,
+  } = useChatbot();
   const inputRef = useRef(null);
   const [expandedSourceMessageIds, setExpandedSourceMessageIds] = useState(new Set());
 
@@ -145,6 +154,22 @@ function ChatbotPanel({
           ) : null}
         </div>
       </header>
+
+      {activeAnalysis ? (
+        <div className="flex items-center justify-between gap-3 border-b border-coral/15 bg-coral/5 px-5 py-3">
+          <p className="text-xs text-slate-600">
+            <span className="font-medium text-slate-900">{activeAnalysis.listingName}</span> 분석 결과를
+            근거로 답변합니다.
+          </p>
+          <button
+            type="button"
+            onClick={clearActiveAnalysis}
+            className="shrink-0 text-xs font-medium text-slate-500 transition hover:text-coral"
+          >
+            해제
+          </button>
+        </div>
+      ) : null}
 
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
         {messages.map((message) => (
