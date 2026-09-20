@@ -1,0 +1,55 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # 통합 테스트용 일회용 DB. 운영 Cloud SQL에는 붙지 않는다.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: jeonse_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/jeonse_db
+      PYTHONPATH: .
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # alembic env.py가 backend.app.settings를 import → DATABASE_URL을 그대로 쓴다
+      - name: DB 스키마 생성
+        run: alembic -c RDB/alembic.ini upgrade head
+
+      - name: 평가셋 스키마 검증
+        run: python eval/validate.py
+
+      # 정확도가 기준선(249/250, 31/33, 미탐 0) 아래로 내려가면 exit 1
+      - name: 규칙 엔진 정확도
+        run: python eval/run_rules_eval.py
+
+      # current 스킴이 실제 엔진과 어긋나면 exit 1
+      - name: 배점 민감도 회귀
+        run: python eval/sensitivity.py
+
+      - name: 단위·통합 테스트
+        run: python -m unittest discover -s backend -p "test_*.py" -t .

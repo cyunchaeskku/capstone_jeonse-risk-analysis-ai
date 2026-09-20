@@ -19,6 +19,12 @@ from eval.engine import assess
 CASES_DIR = Path(__file__).parent / "cases"
 DANGEROUS = {"risk", "high_risk"}  # 이진화 기준: 사용자에게 "위험하다"고 말한 등급
 
+# 회귀 기준선. 현재 성적이고, 아래로 내려가면 CI가 막는다.
+# 올라가면 같이 올려야 다음 회귀를 잡는다. 미탐은 늘어나는 것 자체를 막는다.
+BASELINE_RULE_OK = 249
+BASELINE_GRADE_EXACT = 31
+BASELINE_MAX_MISSES = 0
+
 
 def load_cases() -> list[dict]:
     return [
@@ -114,6 +120,20 @@ def main() -> int:
         for case_id, source, want, got in mismatched:
             print(f"  {case_id:<40} [{source:<18}] 정답 {want:<10} → 실제 {got}")
 
+    # ── 4) 회귀 판정 ─────────────────────────────────────────────────────
+    regressions = []
+    if total_ok < BASELINE_RULE_OK:
+        regressions.append(f"규칙별 판정 {total_ok} < 기준선 {BASELINE_RULE_OK}")
+    if exact < BASELINE_GRADE_EXACT:
+        regressions.append(f"등급 완전일치 {exact} < 기준선 {BASELINE_GRADE_EXACT}")
+    if fn > BASELINE_MAX_MISSES:
+        regressions.append(f"미탐 {fn}건 > 허용 {BASELINE_MAX_MISSES}건")
+
+    if regressions:
+        print("\n✗ 회귀 발생")
+        for line in regressions:
+            print(f"    {line}")
+        return 1
     return 0
 
 
