@@ -3,8 +3,8 @@
   "description": "전세가율 정확히 80.0%. 명세는 초과(>)라 경계값은 fail이 아니다.",
   "label_source": "synthetic_boundary",
   "expected": {
-    "grade": "safe",
-    "rationale": "400/500 = 0.80. 명세 R1은 `ratio > 0.80`이므로 등호는 pass. R2-b도 `> 0.80`이라 동일.",
+    "grade": "caution",
+    "rationale": "400/500 = 0.80. 명세 R1은 `ratio > 0.80`이므로 status는 등호에서 pass. 단 §4-2 비례 배점은 60%부터 가산하므로 R1 15×(0.80-0.60)/0.40 = 8점, R2-b 30×0.5 = 15점, 합 23 → 주의. status가 전부 pass여도 부담률 자체가 점수를 만든다.",
     "checks": {
       "deposit_to_market_ratio": "pass",
       "mortgage_ratio": "pass",

@@ -3,8 +3,8 @@
   "description": "근저당 단독으로는 pass인데 보증금 합산으로 fail. R2-b가 존재하는 이유.",
   "label_source": "synthetic_boundary",
   "expected": {
-    "grade": "risk",
-    "rationale": "근저당 단독 200/500 = 0.40으로 pass 구간. 그러나 합산 (200+205)/500 = 0.81 > 0.80 → fail(30). R1은 205/500 = 0.41로 pass. R2-b가 없으면 0점으로 통과했을 입력.",
+    "grade": "caution",
+    "rationale": "근저당 단독 200/500 = 0.40으로 pass 구간. 그러나 합산 (200+205)/500 = 0.81 > 0.80 → fail. 비례 배점으로 30×(0.81-0.60)/0.40 = 16점. R1은 205/500 = 0.41로 비례 구간(0.60) 아래라 0점. 합 16 → 주의. R2-b가 없으면 0점으로 통과했을 입력.",
     "checks": {
       "deposit_to_market_ratio": "pass",
       "mortgage_ratio": "fail",

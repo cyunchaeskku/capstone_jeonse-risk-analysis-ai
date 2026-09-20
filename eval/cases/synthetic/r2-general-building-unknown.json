@@ -3,8 +3,8 @@
   "description": "일반건물은 호실 시세가 없어 R2를 판정하지 않는다.",
   "label_source": "synthetic_boundary",
   "expected": {
-    "grade": "safe",
-    "rationale": "명세 R2는 집합건물 전제. 일반건물은 분모(호실 시세)를 구할 수 없어 unknown. R8도 선순위 보증금 미입력이라 unknown.",
+    "grade": "caution",
+    "rationale": "명세 R2는 집합건물 전제. 일반건물은 분모(호실 시세)를 구할 수 없어 unknown. R1·R8도 unknown. 담보 여력 3종이 모두 unknown이므로 §0-2에 따라 바닥 점수 15 → 주의. '판단 근거가 없다'를 '안전하다'로 표시하지 않는다.",
     "checks": {
       "deposit_to_market_ratio": "unknown",
       "mortgage_ratio": "unknown",

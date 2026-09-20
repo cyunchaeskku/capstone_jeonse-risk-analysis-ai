@@ -3,8 +3,8 @@
   "description": "다가구인데 선순위 보증금을 확인하지 못함.",
   "label_source": "synthetic_boundary",
   "expected": {
-    "grade": "safe",
-    "rationale": "명세 R8: 선순위 보증금 미확보 → unknown. 다가구에서 가장 위험한 항목이 점수 0으로 빠지는 구조적 한계를 드러내는 케이스.",
+    "grade": "caution",
+    "rationale": "명세 R8: 선순위 보증금 미확보 → unknown. 선순위 보증금은 §2에서 오프라인 서류로만 얻을 수 있어 실제 제품에서 다가구는 거의 항상 이 경로를 탄다. 담보 여력 3종이 전부 unknown이라 §0-2 바닥 점수 15 → 주의. 이 바닥이 없으면 다가구 전체가 0점 안전으로 표시된다.",
     "checks": {
       "deposit_to_market_ratio": "unknown",
       "mortgage_ratio": "unknown",

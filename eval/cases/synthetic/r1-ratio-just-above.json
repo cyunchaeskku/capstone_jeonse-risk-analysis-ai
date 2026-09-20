@@ -3,8 +3,8 @@
   "description": "전세가율 81%. R1과 R2-b가 같은 임계를 공유해 동시에 켜진다.",
   "label_source": "synthetic_boundary",
   "expected": {
-    "grade": "risk",
-    "rationale": "405/500 = 0.81. R1 fail(15). 근저당 0이라 R2-b도 (0+405)/500 = 0.81 > 0.80 → fail(30). 합 45 → 위험. 오버라이드는 1.0 초과가 아니라 미발동.",
+    "grade": "caution",
+    "rationale": "405/500 = 0.81. 둘 다 fail이지만 §4-2 비례 배점으로 R1 15×(0.81-0.60)/0.40 = 8점, R2-b 30×0.525 = 16점, 합 24 → 주의. 계단 배점이던 시절 45점(위험)에서 내려온 값이다. 80.0%(23점)와 81%(24점)의 차이가 1점뿐이라 절벽이 사라졌다. 오버라이드는 0.90 초과가 아니라 미발동.",
     "checks": {
       "deposit_to_market_ratio": "fail",
       "mortgage_ratio": "fail",

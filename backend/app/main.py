@@ -1375,10 +1375,15 @@ _CHECK_WEIGHTS: dict[str, int] = {
     "owner_mismatch": 15,
     "rights_encumbrance": 30,
     "illegal_building": 15,
-    "senior_deposit": 25,
+    "senior_deposit": 30,  # R2와 §1의 동일 부등식 → 동일 가중치
 }
 
 _RISK_SCORE_MAX = 100
+_PROP_FLOOR = 0.6  # 비례 배점 시작. 이하는 0점
+_PROP_CEIL = 1.0  # 시세 전액. 이상은 만점
+_BURDEN_CODES = ("deposit_to_market_ratio", "mortgage_ratio", "senior_deposit")
+_UNKNOWN_FLOOR_SCORE = 15  # 담보 여력을 하나도 못 본 경우의 바닥 점수
+_COMBINED_OVERRIDE_THRESHOLD = 0.9  # R2-b 고위험 오버라이드
 _RISK_SCORE_RANGES = (
     {"min_score": 0, "max_score": 14, "grade": "safe"},
     {"min_score": 15, "max_score": 29, "grade": "caution"},
@@ -1387,13 +1392,49 @@ _RISK_SCORE_RANGES = (
 )
 
 
-def _score_impact(check: ListingCheckResult) -> int:
-    weight = _CHECK_WEIGHTS.get(check.code, 0)
-    if check.status == "fail":
+def _proportional_points(ratio: float, weight: int) -> int:
+    """부담률을 60%~100% 구간에서 선형 배점. 계단식 임계의 절벽·포화를 없앤다."""
+    if ratio <= _PROP_FLOOR:
+        return 0
+    if ratio >= _PROP_CEIL:
         return weight
-    if check.status == "warn":
+    return round(weight * (ratio - _PROP_FLOOR) / (_PROP_CEIL - _PROP_FLOOR))
+
+
+def _stepwise_points(status: str, weight: int) -> int:
+    if status == "fail":
+        return weight
+    if status == "warn":
         return weight // 2
     return 0
+
+
+def _score_impact(check: ListingCheckResult) -> int:
+    """§1 핵심 부등식을 쓰는 R1·R2-b는 비례 배점, 나머지는 계단 배점."""
+    weight = _CHECK_WEIGHTS.get(check.code, 0)
+    evidence = check.evidence or {}
+
+    if check.code == "deposit_to_market_ratio":
+        ratio = evidence.get("ratio")
+        return _proportional_points(ratio, weight) if ratio is not None else 0
+
+    if check.code == "mortgage_ratio":
+        combined, alone = evidence.get("combined_ratio"), evidence.get("ratio")
+        if combined is None:
+            return _stepwise_points(check.status, weight)
+        # R2-a(근저당 단독)는 계단 유지. combined로 갈음하면 보증금이 작은 고근저당 물건이 저평가된다.
+        alone_status = (
+            "fail"
+            if alone > evidence["threshold_fail"]
+            else "warn"
+            if alone > evidence["threshold_warn"]
+            else "pass"
+        )
+        return max(
+            _stepwise_points(alone_status, weight), _proportional_points(combined, weight)
+        )
+
+    return _stepwise_points(check.status, weight)
 
 
 def _build_score_breakdown(checks: list[ListingCheckResult]) -> list[dict[str, int | str]]:
@@ -1408,7 +1449,12 @@ def _build_score_breakdown(checks: list[ListingCheckResult]) -> list[dict[str, i
 
 
 def _compute_risk_score(checks: list[ListingCheckResult]) -> int:
-    return min(sum(_score_impact(check) for check in checks), _RISK_SCORE_MAX)
+    score = min(sum(_score_impact(check) for check in checks), _RISK_SCORE_MAX)
+    # §0-2. 담보 여력을 하나도 확인하지 못했으면 '안전'이라고 말하지 않는다.
+    by_code = {check.code: check.status for check in checks}
+    if all(by_code.get(code) == "unknown" for code in _BURDEN_CODES):
+        return max(score, _UNKNOWN_FLOOR_SCORE)
+    return score
 
 
 def _calculate_jeonse_concentration(
@@ -2215,9 +2261,10 @@ def _collect_override_reasons(
             "allocated_mortgage_krw", payload.mortgage_total_krw
         )
         combined = (mortgage_krw + payload.deposit_krw) / market_price
-        if combined > 1.0:
+        # 낙찰가율 70~80%를 감안하면 90%도 사실상 전액 손실. 100%는 너무 느슨하다.
+        if combined > _COMBINED_OVERRIDE_THRESHOLD:
             reasons.append(
-                f"채권최고액과 보증금의 합이 시세의 {combined:.0%}로 시세를 초과합니다. (R2-b)"
+                f"채권최고액과 보증금의 합이 시세의 {combined:.0%}로 경매 회수 가능 범위를 넘습니다. (R2-b)"
             )
     return reasons
 

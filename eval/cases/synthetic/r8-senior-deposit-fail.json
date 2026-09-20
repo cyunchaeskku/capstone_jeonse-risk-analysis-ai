@@ -3,8 +3,8 @@
   "description": "다가구 선순위 보증금 합산 83%.",
   "label_source": "synthetic_boundary",
   "expected": {
-    "grade": "caution",
-    "rationale": "명세 R8: (300+100+100)/600 = 0.833 > 0.80 → fail(25) → 주의(15~29). R1은 100/600 = 0.167로 pass.",
+    "grade": "risk",
+    "rationale": "명세 R8: (300+100+100)/600 = 0.833 > 0.80 → fail. §4-1에서 R8은 R2와 같은 §1 부등식이므로 가중치 30 → 위험(30~59). R1은 일반건물이라 unknown이며, 다가구에서 담보 여력을 잡는 규칙은 R8뿐이다.",
     "checks": {
       "deposit_to_market_ratio": "unknown",
       "mortgage_ratio": "unknown",
