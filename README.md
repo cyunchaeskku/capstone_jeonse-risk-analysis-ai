@@ -28,26 +28,69 @@
 
 ### 2. 실제 매물 위험 분석
 
-사용자가 실제 매물 정보를 입력하면, 해당 매물의 위험 요소를 분석한다.
+사용자가 매물 정보를 입력하면 8개 규칙으로 위험도를 판정하고 0~100점과 4단계 등급을 낸다.
 
-- 등기부등본 기반 확인 항목
-- 실제 주소와 등록 정보 일치 여부 확인
-- 권리관계, 소유 구조, 계약 관련 위험 신호 점검
-- 분석 결과 요약 및 설명 제공
+| 규칙 | 내용 |
+|---|---|
+| R1 | 전세가율 (보증금 / 시세) |
+| R2 | 근저당 비율. 보증금 합산 부담률 포함 |
+| R3 | 계약서 임대인 ≠ 등기부 소유자 |
+| R4 | 권리침해 등기 (가압류·압류·신탁 등) |
+| R5 | 주거용 용도 여부 |
+| R6 | 위반건축물 |
+| R7 | 동일 건물 전세 거래 집중도 |
+| R8 | 선순위 보증금 |
+
+- **판정은 규칙, 설명은 LLM.** 규칙 엔진이 등급을 정하고 LLM은 그 결과를 자연어로 풀어쓴다.
+  LLM은 판정값을 바꾸지 않는다 (`docs/adr/`)
+- **모르면 `unknown`.** 데이터가 없으면 `pass`로 넘기지 않는다. 미탐을 안전한 통과로 위장하지 않기 위함
+- 등기부등본 PDF는 LLM이, 건축물대장 PDF는 비전 모델이 직접 판독한다
+- 상세 로직: `docs/전세사기위험도판별핵심로직.md`
 
 ### 3. 계약 전 체크리스트 및 Q&A
 
 계약하러 가기 전에 반드시 확인해야 할 항목을 안내한다.
 
 - 상황별 체크리스트 제공
-- 챗봇 기반 질문 응답
+- 법령·판례 RAG 챗봇. 질문을 일상/법률로 분류해 법률 질문만 검색 경로를 탄다
+- 분석 결과를 챗봇에 연결해 "이 매물"을 근거로 질문 가능
 - 계약 단계별 주의사항 안내
-- 사용자가 놓치기 쉬운 항목에 대한 보조 설명
 
-## 개발 상태
+## 테스트와 평가
 
-이 저장소는 초기 설계와 구현을 병행하는 단계다.  
-현재는 문서 중심으로 시스템 경계와 기능 범위를 정리하고 있으며, 세부 기능은 점진적으로 확장할 예정이다.
+### 규칙 엔진 평가셋 (`eval/`)
+
+규칙 엔진이 외부 API를 부르지 않는 순수 함수라, **API 키도 네트워크도 비용도 없이** 전수 측정된다.
+
+```
+케이스 33건   실측 4 (경매 기록으로 라벨링) / 합성 29 (경계값)
+규칙별 판정   249/250  99.6%
+등급 4단계     31/33   93.9%
+미탐          0건
+```
+
+- 정답 라벨은 **명세에서 손으로 도출**한다. 엔진 출력을 복사하면 순환 논증이 된다
+- 실측 케이스는 경매 물건의 등기부를 **계약 시점으로 복원**한다. 경매개시결정 이후 등기를
+  그대로 넣으면 결과를 보고 결과를 맞히게 된다
+- 상세: `eval/README.md`
+
+### 측정 실행
+
+```bash
+PYTHONPATH=. python -m unittest discover -s backend -p "test_*.py" -t .   # 테스트 28건
+PYTHONPATH=. python eval/validate.py          # 평가셋 스키마 검증
+PYTHONPATH=. python eval/run_rules_eval.py    # 정확도. 기준선 미달이면 exit 1
+PYTHONPATH=. python eval/sensitivity.py       # 배점 설계 변경별 기여도
+```
+
+`backend/tests/`는 DB가 필요하고 **테이블이 비어 있다고 가정**한다. 운영 DB를 가리킨 채로
+돌리지 말 것.
+
+### CI
+
+`.github/workflows/ci.yml` — push·PR마다 GitHub Actions에서 실행한다.
+Postgres 16 컨테이너를 띄워 마이그레이션을 적용하므로 **DB 통합 테스트까지 돈다.**
+규칙 엔진 정확도가 기준선(249/250, 31/33, 미탐 0) 아래로 떨어지면 실패한다.
 
 ## 실행 방법
 
@@ -71,15 +114,17 @@ http://localhost:5173
 
 저장소 루트에서 실행한다.
 
+환경 변수는 루트 `.env`에서 읽는다 (`backend/app/settings.py`). **`DATABASE_URL`만 필수**이고
+나머지 API 키는 없으면 해당 기능만 비활성화된다.
+
 ```bash
-export OPENAI_API_KEY=your_api_key
+bash scripts/db_session.sh          # Cloud SQL Auth Proxy (다른 터미널)
 uvicorn backend.app.main:app --reload
 ```
 
-기본 개발 서버 주소:
-
 ```text
 http://localhost:8000
+http://localhost:8000/docs          # Swagger UI
 ```
 
 ## 배포
@@ -88,7 +133,7 @@ http://localhost:8000
 |---|---|---|
 | Frontend | Vercel | `https://capstone-jeonse-risk-analysis-ai.vercel.app` |
 | Backend | GCP Cloud Run (서울) | `https://jeonse-backend-209169324729.asia-northeast3.run.app` |
-| RDB (법령·판례 + 회원) | GCP Cloud SQL PostgreSQL 16 (서울) | 상시 가동. 로컬 접속은 `bash scripts/db_session.sh` |
+| RDB (법령·판례 + 회원 + 분석 기록) | GCP Cloud SQL PostgreSQL 16 (서울) | 상시 가동. 로컬 접속은 `bash scripts/db_session.sh` |
 | FAISS 인덱스 | GCP Cloud Storage (서울, 버전 관리) | `gs://project-1bbc94dc-a155-4b6b-8a5-vectordb` |
 
 ### 재배포
@@ -123,14 +168,17 @@ bash scripts/redeploy_backend.sh demo-day   # 태그 직접 지정
 ## 디렉터리 구조
 
 - `frontend/`: 사용자 화면
-- `backend/`: API 서버
+- `backend/`: API 서버. `backend/tests/`에 테스트
+- `eval/`: 규칙 엔진 평가셋과 측정 하네스
 - `docs/`: 설계 문서, 기능 스펙, ADR, 작업 컨텍스트
-- `RDB/`: 데이터베이스 관련 설정
-- `scripts/`: 벡터 DB 생성 및 보조 스크립트
+- `RDB/`: 데이터베이스 관련 설정, Alembic 마이그레이션
+- `scripts/`: 벡터 DB 생성, 데이터 수집, 배포 스크립트
+- `.github/workflows/`: CI
 
 ## 문서 구조
 
 - `docs/제안서.md`: 제출용 제안 문서
+- `docs/전세사기위험도판별핵심로직.md`: **R1~R8 규칙·배점 명세. 구현의 단일 기준**
 - `docs/architecture.md`: 시스템 구조와 책임 경계
 - `docs/domain-model.md`: 핵심 엔티티와 데이터 의미
 - `docs/api-contract.md`: 프론트엔드/백엔드 인터페이스 계약
@@ -155,17 +203,21 @@ bash scripts/redeploy_backend.sh demo-day   # 태그 직접 지정
 | Frontend | Tailwind CSS | 스타일 |
 | Backend | FastAPI (Python) | API 서버 |
 | Backend | REST API | 공공 데이터 연동 |
-| RDB | PostgreSQL | 분석 이력 저장 |
-| Vector DB | FAISS | 법률 문서 벡터 인덱스 저장 및 유사도 검색 |
-| AI / LLM | GPT-5.4 nano (OpenAI API) | 규칙 기반 결과 설명, QA 응답 보조 |
-| AI / LLM | text-embedding-3-large | 법률 문서 벡터 임베딩 (법령·판례) |
-| RAG | LangChain | 검색 증강 생성 파이프라인 |
-| 문서 파싱 | PyMuPDF | PDF 텍스트 추출 |
-| 문서 파싱 | Upstage Document Parse API | 고정밀 문서 파싱 |
-| 인프라 | Docker | 컨테이너 관리 |
+| RDB | PostgreSQL | 법령·판례 원문, 회원, 분석 기록 |
+| Vector DB | FAISS | 법령·판례 벡터 인덱스. 두 인덱스를 분리 운용 |
+| AI / LLM | OpenAI API (`OPENAI_MODEL`) | 규칙 판정 결과 설명, QA 응답 |
+| AI / LLM | 비전 모델 (`OPENAI_VISION_MODEL`) | 건축물대장 스캔본 판독 |
+| AI / LLM | text-embedding-3-large | 법령·판례 임베딩 |
+| RAG | LangChain / LangGraph | 검색 증강 생성. 질문 분류 → 검색 → 답변 상태 기계 |
+| 문서 파싱 | PyMuPDF | 등기부 PDF 텍스트 추출, 대장 PDF 이미지 렌더링 |
+| 인프라 | Docker, Cloud Build | 이미지 빌드·배포 |
+| CI | GitHub Actions | 테스트 + 규칙 엔진 회귀 측정 |
 
-## 현재 구현 메모
+## 구현 메모
 
-- 분석 API는 메모리 기반 최소 구현이다.
-- 전역 챗봇은 `frontend`에서 `backend`의 `POST /qa`를 호출한다.
-- QA는 현재 LangChain + OpenAI 기반의 최소 구현이며, 법령 기반 RAG는 후속 단계에서 확장한다.
+- 법령·판례 인덱스를 **분리**해 운용한다. 한 인덱스에 섞으면 상위 결과가 한쪽 소스로 쏠려,
+  법령 근거와 판례가 둘 다 필요한 답변이 한쪽만 받는다.
+- 챗봇은 `analysis_id`로 분석 기록을 읽어 프롬프트에 주입한다. 최근 기록을 자동으로 붙이지는
+  않는다 — 기록이 여러 건이면 다른 매물을 근거로 답할 위험이 있어 사용자가 명시적으로 고른다.
+- 비로그인 분석도 `user_id = NULL`로 저장한다. 익명 사용성과 이력 관리를 양립시킨다.
+- `law_relations` 테이블은 현재 0행이다.
