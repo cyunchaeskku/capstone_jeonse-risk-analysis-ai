@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Cloud SQL 작업 세션: Auth Proxy(localhost:5433) 실행. Ctrl+C로 종료.
-# 프록시가 떠 있는 동안 다른 터미널에서 ingest_*.py, make_vectorDB_*.py, alembic을 실행한다.
-#
-# 인스턴스는 백엔드 런타임(로그인·세션)이 쓰므로 상시 가동이다. 이 스크립트는 켜고 끄지 않는다.
+# Cloud SQL Auth Proxy(localhost:5433). Ctrl+C로 종료.
+# 프록시 실행 중 다른 터미널에서 ingest_*.py, make_vectorDB_*.py, alembic 실행.
+# 인스턴스 시작·중지 없음 — 런타임(로그인·세션)이 쓰므로 상시 가동.
 #
 # 실행: bash scripts/db_session.sh
 set -euo pipefail

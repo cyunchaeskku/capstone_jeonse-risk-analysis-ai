@@ -88,7 +88,7 @@ http://localhost:8000
 |---|---|---|
 | Frontend | Vercel | `https://capstone-jeonse-risk-analysis-ai.vercel.app` |
 | Backend | GCP Cloud Run (서울) | `https://jeonse-backend-209169324729.asia-northeast3.run.app` |
-| RDB (법령·판례 원본) | GCP Cloud SQL PostgreSQL 16 (서울) | 평소 중지. `bash scripts/db_session.sh`로 시작·접속 |
+| RDB (법령·판례 + 회원) | GCP Cloud SQL PostgreSQL 16 (서울) | 상시 가동. 로컬 접속은 `bash scripts/db_session.sh` |
 | FAISS 인덱스 | GCP Cloud Storage (서울, 버전 관리) | `gs://project-1bbc94dc-a155-4b6b-8a5-vectordb` |
 
 ### 재배포
@@ -114,6 +114,8 @@ bash scripts/redeploy_backend.sh demo-day   # 태그 직접 지정
 | 변경 | 방법 |
 |---|---|
 | API 키 (`.env`) | `python scripts/upload_secrets.py` 후 `gcloud run services update jeonse-backend --region=asia-northeast3 --update-labels=redeploy=$(date +%s)` (Secret은 리비전 생성 시점 값을 읽으므로 새 리비전이 필요) |
+| DB 비밀번호 | `DATABASE_URL` Secret을 **수동으로** 갱신한다. `.env`는 프록시용(`@localhost:5433`), Cloud Run은 유닉스 소켓(`@/jeonse_db?host=/cloudsql/<연결이름>`)이라 형식이 다르다. `upload_secrets.py`는 이 키를 다루지 않는다 |
+| DB 스키마 (마이그레이션) | 이미지에 `RDB/`가 없으므로 로컬에서 적용한다. `bash scripts/db_session.sh` 실행 후 다른 터미널에서 `PYTHONPATH=. alembic -c RDB/alembic.ini upgrade head` |
 | 백엔드 환경 변수 | `gcloud run services update jeonse-backend --region=asia-northeast3 --update-env-vars=KEY=VALUE` |
 | 프론트 환경 변수 (`VITE_*`) | Vercel 대시보드에서 수정 후 Redeploy (빌드 시 주입) |
 | 프론트 도메인 변경 | 백엔드 `CORS_ORIGINS`·`VWORLD_API_DOMAIN`, 네이버 Maps Web 서비스 URL, VWorld 서비스 URL 모두 갱신 |

@@ -6,6 +6,7 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 env = dotenv_values(Path(__file__).resolve().parent.parent / ".env")  # 따옴표를 벗겨서 읽는다
+# DATABASE_URL 제외: 로컬=프록시(:5433), Cloud Run=유닉스 소켓. 형식이 달라 수동 관리.
 names = [
     "OPENAI_API_KEY", "DATA_GO_KR_API_KEY",
     "NAVER_MAPS_CLIENT_ID", "NAVER_MAPS_CLIENT_SECRET",

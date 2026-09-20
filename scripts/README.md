@@ -18,7 +18,7 @@
 | `ingest_precedents.py` | 판례 전문 JSONL을 파싱해 `precedents` 테이블에 적재 |
 | `redeploy_backend.sh` | 백엔드 이미지 빌드(Cloud Build, 인덱스는 GCS에서) 후 Cloud Run 재배포 |
 | `upload_vectordb.sh` | `vectorDB/` 인덱스를 GCS 버킷에 업로드. `make_vectorDB_*.py` 실행 후 |
-| `db_session.sh` | Cloud SQL 인스턴스 시작 + Auth Proxy(`localhost:5433`) 실행, Ctrl+C 시 인스턴스 중지 |
+| `db_session.sh` | Cloud SQL Auth Proxy(`localhost:5433`) 실행. 인스턴스는 상시 가동이라 켜고 끄지 않는다 |
 | `upload_secrets.py` | `.env`의 API 키를 Secret Manager에 등록 (값 출력 안 함) |
 
 ---
@@ -29,7 +29,7 @@ korean-law CLI를 통해 법령 전문을 가져와 PostgreSQL DB에 저장한�
 
 ### 전제 조건
 
-- Cloud SQL 세션 실행 중 (`bash scripts/db_session.sh`, 다른 터미널에서 유지)
+- Cloud SQL 프록시 실행 중 (`bash scripts/db_session.sh`, 다른 터미널에서 유지)
 - Alembic 마이그레이션 적용 완료 (`alembic -c RDB/alembic.ini upgrade head`)
 - `.venv` 활성화 상태
 
