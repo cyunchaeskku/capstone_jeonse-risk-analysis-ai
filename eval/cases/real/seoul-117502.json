@@ -1,0 +1,64 @@
+{
+  "case_id": "seoul-117502",
+  "description": "서울중앙지법 2024타경117502 다세대. 계약 시점(2021.02)으로 복원한 입력.",
+  "label_source": "auction_outcome",
+  "expected": {
+    "grade": "high_risk",
+    "rationale": "감정가 3.8억 대비 보증금 3.67억으로 전세가율 96.6%. 근저당이 없어도 보증금만으로 시세를 거의 전부 차지해 경매 배당으로 회수할 여지가 없다. 통상 낙찰가율(감정가의 70~80%)을 적용하면 배당만으로는 전액 손실이고, 임차인이 대항력을 갖춰 낙찰자가 인수해야 하므로 9회 유찰됐다. 계약 재고를 권고해야 할 수준이므로 고위험.",
+    "checks": {
+      "deposit_to_market_ratio": "fail",
+      "mortgage_ratio": "fail",
+      "owner_mismatch": null,
+      "rights_encumbrance": "pass",
+      "residential_use": null,
+      "illegal_building": null,
+      "duplicate_contract": null,
+      "senior_deposit": "pass"
+    }
+  },
+  "payload": {
+    "listing_name": "서울중앙지법 2024타경117502 다세대",
+    "deposit_krw": 367000000,
+    "market_price_krw": 380000000,
+    "registry_type": "aggregate_building",
+    "mortgage_total_krw": 0,
+    "mortgage_items": [],
+    "registry_owner_name": "소유자A",
+    "contract_owner_name": "소유자A",
+    "critical_terms": [],
+    "building_type": "공동주택",
+    "detail_use": "다세대주택",
+    "illegal_building_status": "unclear",
+    "recent_jeonse_count": 0,
+    "recent_jeonse_peak_12m_count": 0,
+    "households": 0,
+    "recent_jeonse_data_status": "unavailable",
+    "senior_deposit_krw": null
+  },
+  "provenance": {
+    "_출처_주의": "이 케이스의 수치는 조사 에이전트(Codex)의 보고서에서 옮긴 2차 정보다. 원문 서류를 직접 확인하지 않았다. 정량 평가에 정식 반영하기 전에 매각물건명세서·현황조사서를 직접 열어 재확인할 것.",
+    "deposit_krw": "2차. 보고서에 기재된 보증금 367,000,000원.",
+    "market_price_krw": "2차. 보고서에 기재된 감정평가액 380,000,000원.",
+    "mortgage_total_krw": "추론. 최선순위 설정이 2024-09-04 강제경매개시결정이므로, 말소기준권리보다 앞선 근저당·가압류가 존재하지 않는다. 따라서 계약 시점(2021.02) 등기부에 근저당이 없었다. 등기부 원본 미확인.",
+    "mortgage_items": "추론. 위와 같음.",
+    "registry_owner_name": "가정. 등기부 미확인이며 불일치 증거 없음. 실명은 익명화.",
+    "contract_owner_name": "가정. 위와 같음.",
+    "critical_terms": "복원. 최선순위인 강제경매개시결정(2024-09-04)은 전입일(2021-02-25)보다 뒤라 계약 시점 입력에서 제외. 그 이전에 설정된 권리침해 등기는 존재하지 않는다.",
+    "building_type": "미확인. 물건종류가 다세대라는 점에서 채웠으나 건축물대장 미발급.",
+    "detail_use": "미확인. 위와 같음.",
+    "illegal_building_status": "미확인. 건축물대장 미발급.",
+    "households": "미확인. 건축물대장 미발급.",
+    "recent_jeonse_data_status": "미확보로 처리."
+  },
+  "outcome": {
+    "auction_case": "서울중앙지방법원 2024타경117502",
+    "first_priority": "2024-09-04 강제경매개시결정",
+    "tenant_move_in": "2021-02-25",
+    "tenant_has_priority": true,
+    "tenant_claimed_distribution": null,
+    "appraisal_krw": 380000000,
+    "failed_auctions": 9,
+    "note": "전입(2021-02-25)이 최선순위(2024-09-04)보다 3년 이상 앞서 대항력이 있다. 보증금이 감정가의 96.6%라 낙찰자가 인수할 금액이 물건 가치와 맞먹어 9회 유찰됐다."
+  },
+  "notes": "하임빌(incheon-521675)과 같은 '등기부가 깨끗한 깡통전세' 유형이지만 전세가율이 96.6%로 100%를 넘지 않는다. 하임빌은 100.4%로 R2-b 오버라이드가 발동해 high_risk가 되지만 이 건은 미발동해 45점 risk에 머문다. 전세가율 3.8%p 차이로 등급이 갈리는 배점 포화 문제의 실제 사례."
+}

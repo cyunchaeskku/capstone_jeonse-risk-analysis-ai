@@ -1,0 +1,72 @@
+{
+  "case_id": "seouleast-55849-202",
+  "description": "서울동부지법 2022타경55849 202호. HUG 대위변제 사고. 계약 시점(2022.03)으로 복원한 입력.",
+  "label_source": "auction_outcome",
+  "expected": {
+    "grade": "high_risk",
+    "rationale": "전세가율은 75.9%로 안전 구간이고 근저당도 없다. 그러나 계약(전입 2022.03.23) 2년 6개월 전인 2019.09.02에 설정된 가압류가 등기부에 살아 있었고, 실제로 보증금 미반환 사고가 발생해 HUG가 대위변제한 뒤 구상권으로 강제경매를 신청했다. 등기부를 확인했다면 즉시 계약을 피했어야 할 상황이므로, 명세 §4-5 오버라이드 1항(말소되지 않은 가압류)에 따라 고위험.",
+    "checks": {
+      "deposit_to_market_ratio": "pass",
+      "mortgage_ratio": "pass",
+      "owner_mismatch": null,
+      "rights_encumbrance": "fail",
+      "residential_use": "pass",
+      "illegal_building": null,
+      "duplicate_contract": null,
+      "senior_deposit": "pass"
+    }
+  },
+  "payload": {
+    "listing_name": "서울동부지법 2022타경55849 202호",
+    "deposit_krw": 220000000,
+    "market_price_krw": 290000000,
+    "registry_type": "aggregate_building",
+    "mortgage_total_krw": 0,
+    "mortgage_items": [],
+    "registry_owner_name": "소유자A",
+    "contract_owner_name": "소유자A",
+    "critical_terms": [
+      {
+        "term": "가압류",
+        "is_cancelled": false
+      }
+    ],
+    "building_type": "주택",
+    "detail_use": "",
+    "illegal_building_status": "unclear",
+    "recent_jeonse_count": 0,
+    "recent_jeonse_peak_12m_count": 0,
+    "households": 0,
+    "recent_jeonse_data_status": "unavailable",
+    "senior_deposit_krw": null
+  },
+  "provenance": {
+    "deposit_krw": "실측. 매각물건명세서 임차인란 220,000,000원. 사건 청구금액 278,935,890원은 HUG 대위변제액에 지연손해금·비용이 더해진 값이라 보증금과 다르다.",
+    "market_price_krw": "실측. 감정평가액 290,000,000원.",
+    "mortgage_total_krw": "추론. 최선순위 설정이 2019.09.02 가압류이므로 그보다 앞선 근저당이 없다. 등기부 원본 미확인.",
+    "mortgage_items": "추론. 위와 같음.",
+    "critical_terms": "실측 + 복원. 최선순위 가압류 2019.09.02은 전입일(2022.03.23)보다 앞서므로 계약 시점에 이미 존재했다. 따라서 제거하지 않고 유지한다. 말소되지 않았기에 최선순위로 표시된 것이므로 is_cancelled=false.",
+    "registry_type": "추론. 물건 표시가 '202호'로 호실 단위라 집합건물로 판단. 등기부 원본 미확인.",
+    "building_type": "추론. 채권자가 HUG이고 전세보증금반환보증 대위변제로 구상권을 행사한 사건이므로 보증 대상인 주거용 주택이다. 건축물대장 미발급이라 세부 용도는 비워 둔다.",
+    "registry_owner_name": "가정. 등기부 미확인이며 불일치 증거 없음. 실명은 익명화.",
+    "contract_owner_name": "가정. 위와 같음.",
+    "illegal_building_status": "미확인. HUG 보증 가입 요건상 위반건축물이 아닐 가능성이 높으나 건축물대장으로 확인하지 않아 unclear로 둔다.",
+    "households": "미확인. 건축물대장 미발급.",
+    "recent_jeonse_data_status": "미확보로 처리."
+  },
+  "outcome": {
+    "auction_case": "서울동부지방법원 2022타경55849 부동산강제경매",
+    "filed": "2022-09-30",
+    "opened": "2022-10-11",
+    "creditor": "주택도시보증공사",
+    "claim_krw": 278935890,
+    "first_priority": "2019-09-02 가압류",
+    "tenant_move_in": "2022-03-23",
+    "tenant_has_priority": false,
+    "appraisal_krw": 290000000,
+    "sale_dates": ["2026-08-10", "2026-09-21", "2026-11-02", "2026-12-07"],
+    "failed_auctions": 1,
+    "note": "HUG가 임차인에게 보증금을 대위변제한 뒤 임대인에 대한 구상권으로 강제경매를 신청했다. 보증금 미반환 사고 발생이 확정된 사안이다. 임차인은 전입(2022.03.23)이 최선순위(2019.09.02)보다 늦어 대항력이 없고, 낙찰자에게 인수되지 않아 유찰이 1회에 그쳤다. 임차인 자신은 HUG 보증으로 구제됐으나 매물의 위험도와는 별개다."
+  },
+  "notes": "하임빌·117502와 정반대 구조의 케이스. 두 건은 전세가율이 100% 안팎이라 R1·R2가 잡고 R4가 pass였지만, 이 건은 전세가율 75.9%로 R1·R2가 모두 pass이고 오직 R4만 위험을 잡아낸다. 점수만으로는 30점(위험)이고 고위험 오버라이드가 있어야 정답에 도달한다. 오버라이드 설계의 정당성을 실제 사례로 뒷받침하는 첫 케이스이며, 동시에 '전세가율이 안전하면 안전하다'는 통념이 틀렸음을 보여준다. 대항력 없는 임차인 사례로도 처음이다."
+}

@@ -1,0 +1,44 @@
+{
+  "case_id": "r2b-combined-only",
+  "description": "근저당 단독으로는 pass인데 보증금 합산으로 fail. R2-b가 존재하는 이유.",
+  "label_source": "synthetic_boundary",
+  "expected": {
+    "grade": "risk",
+    "rationale": "근저당 단독 200/500 = 0.40으로 pass 구간. 그러나 합산 (200+205)/500 = 0.81 > 0.80 → fail(30). R1은 205/500 = 0.41로 pass. R2-b가 없으면 0점으로 통과했을 입력.",
+    "checks": {
+      "deposit_to_market_ratio": "pass",
+      "mortgage_ratio": "fail",
+      "owner_mismatch": "pass",
+      "rights_encumbrance": "pass",
+      "residential_use": "pass",
+      "illegal_building": "pass",
+      "duplicate_contract": "unknown",
+      "senior_deposit": "pass"
+    }
+  },
+  "payload": {
+    "listing_name": "[합성] 근저당 단독으로는 pass인데 보증금 합산으로 fail. R2-b가 존재하는 이유.",
+    "deposit_krw": 205000000,
+    "market_price_krw": 500000000,
+    "registry_type": "aggregate_building",
+    "mortgage_total_krw": 200000000,
+    "mortgage_items": [
+      {
+        "amount_krw": 200000000,
+        "shared_property_count": 1
+      }
+    ],
+    "registry_owner_name": "소유자A",
+    "contract_owner_name": "소유자A",
+    "critical_terms": [],
+    "building_type": "공동주택",
+    "detail_use": "다세대주택",
+    "illegal_building_status": "absent",
+    "recent_jeonse_count": 0,
+    "recent_jeonse_peak_12m_count": 0,
+    "households": 0,
+    "recent_jeonse_data_status": "unavailable",
+    "senior_deposit_krw": null
+  },
+  "notes": "정답은 docs/전세사기위험도판별핵심로직.md의 판정 규칙과 배점표에서 손으로 도출했다. 엔진 출력이 아니다."
+}

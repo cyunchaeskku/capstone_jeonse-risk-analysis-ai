@@ -1,0 +1,44 @@
+{
+  "case_id": "r2-shared-collateral-allocation",
+  "description": "공동담보 4건에 걸린 근저당. 민법 368① 비례배분 후 판정해야 한다.",
+  "label_source": "synthetic_boundary",
+  "expected": {
+    "grade": "safe",
+    "rationale": "원문 600M을 4건으로 배분하면 150M. 150/500 = 0.30 → pass. 배분하지 않으면 600/500 = 1.20으로 fail이 되어 건물 전체 부채가 호실 하나에 잘못 걸린다.",
+    "checks": {
+      "deposit_to_market_ratio": "pass",
+      "mortgage_ratio": "pass",
+      "owner_mismatch": "pass",
+      "rights_encumbrance": "pass",
+      "residential_use": "pass",
+      "illegal_building": "pass",
+      "duplicate_contract": "unknown",
+      "senior_deposit": "pass"
+    }
+  },
+  "payload": {
+    "listing_name": "[합성] 공동담보 4건에 걸린 근저당. 민법 368① 비례배분 후 판정해야 한다.",
+    "deposit_krw": 100000000,
+    "market_price_krw": 500000000,
+    "registry_type": "aggregate_building",
+    "mortgage_total_krw": 600000000,
+    "mortgage_items": [
+      {
+        "amount_krw": 600000000,
+        "shared_property_count": 4
+      }
+    ],
+    "registry_owner_name": "소유자A",
+    "contract_owner_name": "소유자A",
+    "critical_terms": [],
+    "building_type": "공동주택",
+    "detail_use": "다세대주택",
+    "illegal_building_status": "absent",
+    "recent_jeonse_count": 0,
+    "recent_jeonse_peak_12m_count": 0,
+    "households": 0,
+    "recent_jeonse_data_status": "unavailable",
+    "senior_deposit_krw": null
+  },
+  "notes": "정답은 docs/전세사기위험도판별핵심로직.md의 판정 규칙과 배점표에서 손으로 도출했다. 엔진 출력이 아니다."
+}

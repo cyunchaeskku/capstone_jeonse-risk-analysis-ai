@@ -1,0 +1,39 @@
+{
+  "case_id": "r5-use-info-missing",
+  "description": "건축물 용도 정보 없음.",
+  "label_source": "synthetic_boundary",
+  "expected": {
+    "grade": "safe",
+    "rationale": "명세 R5: 정보 없음 → unknown.",
+    "checks": {
+      "deposit_to_market_ratio": "pass",
+      "mortgage_ratio": "pass",
+      "owner_mismatch": "pass",
+      "rights_encumbrance": "pass",
+      "residential_use": "unknown",
+      "illegal_building": "pass",
+      "duplicate_contract": "unknown",
+      "senior_deposit": "pass"
+    }
+  },
+  "payload": {
+    "listing_name": "[합성] 건축물 용도 정보 없음.",
+    "deposit_krw": 100000000,
+    "market_price_krw": 500000000,
+    "registry_type": "aggregate_building",
+    "mortgage_total_krw": 0,
+    "mortgage_items": [],
+    "registry_owner_name": "소유자A",
+    "contract_owner_name": "소유자A",
+    "critical_terms": [],
+    "building_type": "",
+    "detail_use": "",
+    "illegal_building_status": "absent",
+    "recent_jeonse_count": 0,
+    "recent_jeonse_peak_12m_count": 0,
+    "households": 0,
+    "recent_jeonse_data_status": "unavailable",
+    "senior_deposit_krw": null
+  },
+  "notes": "정답은 docs/전세사기위험도판별핵심로직.md의 판정 규칙과 배점표에서 손으로 도출했다. 엔진 출력이 아니다."
+}

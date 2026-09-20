@@ -1,0 +1,39 @@
+{
+  "case_id": "r7-concentration-warn",
+  "description": "일반건물, 12개월 신규 전세 3건 / 10세대 = 30%. 임계 동시 충족.",
+  "label_source": "synthetic_boundary",
+  "expected": {
+    "grade": "safe",
+    "rationale": "명세 R7: `peak >= 3` 이고 `비율 >= 30%`면 warn. 25 // 2 = 12점. 등급 구간 0~14가 안전이라 R7 단독 warn은 안전을 벗어나지 못한다.",
+    "checks": {
+      "deposit_to_market_ratio": "pass",
+      "mortgage_ratio": "unknown",
+      "owner_mismatch": "pass",
+      "rights_encumbrance": "pass",
+      "residential_use": "pass",
+      "illegal_building": "pass",
+      "duplicate_contract": "warn",
+      "senior_deposit": "unknown"
+    }
+  },
+  "payload": {
+    "listing_name": "[합성] 일반건물, 12개월 신규 전세 3건 / 10세대 = 30%. 임계 동시 충족.",
+    "deposit_krw": 100000000,
+    "market_price_krw": 500000000,
+    "registry_type": "general_building",
+    "mortgage_total_krw": 0,
+    "mortgage_items": [],
+    "registry_owner_name": "소유자A",
+    "contract_owner_name": "소유자A",
+    "critical_terms": [],
+    "building_type": "공동주택",
+    "detail_use": "다세대주택",
+    "illegal_building_status": "absent",
+    "recent_jeonse_count": 5,
+    "recent_jeonse_peak_12m_count": 3,
+    "households": 10,
+    "recent_jeonse_data_status": "complete",
+    "senior_deposit_krw": null
+  },
+  "notes": "정답은 docs/전세사기위험도판별핵심로직.md의 판정 규칙과 배점표에서 손으로 도출했다. 엔진 출력이 아니다."
+}

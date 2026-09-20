@@ -1,0 +1,66 @@
+{
+  "case_id": "incheon-521675-haimvil-201",
+  "description": "인천지법 2021타경521675 다세대 201호. 계약 시점(2021.02)으로 복원한 입력.",
+  "label_source": "auction_outcome",
+  "expected": {
+    "grade": "high_risk",
+    "rationale": "감정가 2.74억 대비 보증금 2.75억으로 전세가율 100.4%. 근저당은 없었으나 보증금만으로 시세를 초과해 경매 시 회수 불가. 실제로 12회 유찰되어 임차인이 보증금을 회수하지 못했다.",
+    "checks": {
+      "deposit_to_market_ratio": "fail",
+      "mortgage_ratio": "fail",
+      "owner_mismatch": null,
+      "rights_encumbrance": "pass",
+      "residential_use": null,
+      "illegal_building": null,
+      "duplicate_contract": null,
+      "senior_deposit": "pass"
+    }
+  },
+  "payload": {
+    "listing_name": "하임빌 201호 (인천 미추홀구 용현동)",
+    "deposit_krw": 275000000,
+    "market_price_krw": 274000000,
+    "registry_type": "aggregate_building",
+    "mortgage_total_krw": 0,
+    "mortgage_items": [],
+    "registry_owner_name": "소유자A",
+    "contract_owner_name": "소유자A",
+    "critical_terms": [],
+    "building_type": "공동주택",
+    "detail_use": "다세대주택",
+    "illegal_building_status": "unclear",
+    "recent_jeonse_count": 0,
+    "recent_jeonse_peak_12m_count": 0,
+    "households": 0,
+    "recent_jeonse_data_status": "unavailable",
+    "senior_deposit_krw": null
+  },
+  "provenance": {
+    "deposit_krw": "실측. 국토부 전월세 실거래가 연립다세대(RTMSDataSvcRHRent), 용현동 629-116 하임빌 2021-04·2021-06 각 27,500만원(전용 84.98㎡, 순수 전세). 임차인 전입 2021.02.19 직후 거래이며 층이 달라도 금액이 동일해 일괄 임대로 판단.",
+    "market_price_krw": "실측. 법원 감정평가액 274,000,000원. 단 감정 시점은 경매개시(2021.09.30) 직후라 계약 시점보다 7개월 늦다.",
+    "mortgage_total_krw": "추론. 매각물건명세서상 최선순위 설정이 2021.04.26 가압류이므로 그 이전 근저당이 없다. 등기부 원본 미확인.",
+    "mortgage_items": "추론. 위와 같음.",
+    "registry_owner_name": "가정. 등기부 미확인이나 불일치 증거 없음. 실명은 익명화.",
+    "contract_owner_name": "가정. 위와 같음.",
+    "critical_terms": "복원. 가압류는 2021.04.26 설정으로 계약(2021.02) 이후라 계약 시점 입력에서 제외. 경매개시결정도 같은 이유로 제외.",
+    "building_type": "미확인. 현황조사서는 '업무시설', 물건종류·소재지 표기는 '다세대주택'으로 충돌. 건축물대장 필요.",
+    "detail_use": "미확인. 위와 같음.",
+    "illegal_building_status": "미확인. 건축물대장 미발급.",
+    "households": "미확인. 건축물대장 미발급.",
+    "recent_jeonse_data_status": "미확보로 처리. 실거래가로 하임빌 2021년 전세 2건은 확인했으나 건물 전체 세대수를 몰라 비율 계산 불가."
+  },
+  "outcome": {
+    "auction_case": "인천지방법원 2021타경521675 부동산강제경매",
+    "filed": "2021-09-29",
+    "claim_krw": 25360015,
+    "first_priority": "2021-04-26 가압류",
+    "tenant_move_in": "2021-02-19",
+    "tenant_has_priority": true,
+    "tenant_claimed_distribution": false,
+    "appraisal_krw": 274000000,
+    "minimum_bid_krw_as_of_2026_09": 3793000,
+    "failed_auctions": 12,
+    "note": "대항력 있는 임차인이 배당요구를 하지 않아 낙찰자가 보증금 전액을 인수해야 한다. 인수 금액이 감정가를 넘어 12회 유찰, 최저가가 감정가의 1.4%까지 하락했다. 임차인의 보증금 회수 실패가 사실상 확정된 사안."
+  },
+  "notes": "등기부가 깨끗한 깡통전세 유형(인천 미추홀구 건축왕 패턴). 근저당·권리침해가 없어 R2 기본 판정과 R4가 무력화되고, R1과 R2-b만 신호를 낸다. 규칙 엔진의 배점 민감도를 시험하는 hard case."
+}

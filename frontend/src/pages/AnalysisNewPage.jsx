@@ -449,6 +449,9 @@ function AnalysisNewPage() {
       // 시세는 0이어도 넘어간다. 확인 불가는 unknown으로 정직하게 판정되는 게 맞다.
       return Boolean(lookup) && toKrw(form.depositKrw) > 0;
     }
+    if (step.id === 'R2') {
+      return registryStatus === 'done' && Boolean(registry);
+    }
     if (step.id === 'R8' && registryType === 'general_building' && form.seniorDepositKnown) {
       return form.seniorDepositKrw.trim() !== '';
     }

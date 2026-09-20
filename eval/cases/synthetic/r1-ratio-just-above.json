@@ -1,0 +1,39 @@
+{
+  "case_id": "r1-ratio-just-above",
+  "description": "전세가율 81%. R1과 R2-b가 같은 임계를 공유해 동시에 켜진다.",
+  "label_source": "synthetic_boundary",
+  "expected": {
+    "grade": "risk",
+    "rationale": "405/500 = 0.81. R1 fail(15). 근저당 0이라 R2-b도 (0+405)/500 = 0.81 > 0.80 → fail(30). 합 45 → 위험. 오버라이드는 1.0 초과가 아니라 미발동.",
+    "checks": {
+      "deposit_to_market_ratio": "fail",
+      "mortgage_ratio": "fail",
+      "owner_mismatch": "pass",
+      "rights_encumbrance": "pass",
+      "residential_use": "pass",
+      "illegal_building": "pass",
+      "duplicate_contract": "unknown",
+      "senior_deposit": "pass"
+    }
+  },
+  "payload": {
+    "listing_name": "[합성] 전세가율 81%. R1과 R2-b가 같은 임계를 공유해 동시에 켜진다.",
+    "deposit_krw": 405000000,
+    "market_price_krw": 500000000,
+    "registry_type": "aggregate_building",
+    "mortgage_total_krw": 0,
+    "mortgage_items": [],
+    "registry_owner_name": "소유자A",
+    "contract_owner_name": "소유자A",
+    "critical_terms": [],
+    "building_type": "공동주택",
+    "detail_use": "다세대주택",
+    "illegal_building_status": "absent",
+    "recent_jeonse_count": 0,
+    "recent_jeonse_peak_12m_count": 0,
+    "households": 0,
+    "recent_jeonse_data_status": "unavailable",
+    "senior_deposit_krw": null
+  },
+  "notes": "정답은 docs/전세사기위험도판별핵심로직.md의 판정 규칙과 배점표에서 손으로 도출했다. 엔진 출력이 아니다."
+}

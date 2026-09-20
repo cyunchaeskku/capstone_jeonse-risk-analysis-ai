@@ -1,0 +1,39 @@
+{
+  "case_id": "r7-aggregate-building-not-scored",
+  "description": "집합건물은 거래 집중도를 점수에 반영하지 않는다.",
+  "label_source": "synthetic_boundary",
+  "expected": {
+    "grade": "safe",
+    "rationale": "명세 R7: 집합건물은 호실별 소유자가 달라 건물 전체 거래량을 점수에 반영하지 않고 참고 정보로만 제공 → unknown.",
+    "checks": {
+      "deposit_to_market_ratio": "pass",
+      "mortgage_ratio": "pass",
+      "owner_mismatch": "pass",
+      "rights_encumbrance": "pass",
+      "residential_use": "pass",
+      "illegal_building": "pass",
+      "duplicate_contract": "unknown",
+      "senior_deposit": "pass"
+    }
+  },
+  "payload": {
+    "listing_name": "[합성] 집합건물은 거래 집중도를 점수에 반영하지 않는다.",
+    "deposit_krw": 100000000,
+    "market_price_krw": 500000000,
+    "registry_type": "aggregate_building",
+    "mortgage_total_krw": 0,
+    "mortgage_items": [],
+    "registry_owner_name": "소유자A",
+    "contract_owner_name": "소유자A",
+    "critical_terms": [],
+    "building_type": "공동주택",
+    "detail_use": "다세대주택",
+    "illegal_building_status": "absent",
+    "recent_jeonse_count": 8,
+    "recent_jeonse_peak_12m_count": 5,
+    "households": 10,
+    "recent_jeonse_data_status": "complete",
+    "senior_deposit_krw": null
+  },
+  "notes": "정답은 docs/전세사기위험도판별핵심로직.md의 판정 규칙과 배점표에서 손으로 도출했다. 엔진 출력이 아니다."
+}

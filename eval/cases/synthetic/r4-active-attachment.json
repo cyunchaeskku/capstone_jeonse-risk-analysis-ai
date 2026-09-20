@@ -1,0 +1,44 @@
+{
+  "case_id": "r4-active-attachment",
+  "description": "말소되지 않은 가압류.",
+  "label_source": "synthetic_boundary",
+  "expected": {
+    "grade": "high_risk",
+    "rationale": "명세 R4: 말소되지 않은 항목이 하나라도 있으면 fail(30) + 오버라이드 1항 → 고위험.",
+    "checks": {
+      "deposit_to_market_ratio": "pass",
+      "mortgage_ratio": "pass",
+      "owner_mismatch": "pass",
+      "rights_encumbrance": "fail",
+      "residential_use": "pass",
+      "illegal_building": "pass",
+      "duplicate_contract": "unknown",
+      "senior_deposit": "pass"
+    }
+  },
+  "payload": {
+    "listing_name": "[합성] 말소되지 않은 가압류.",
+    "deposit_krw": 100000000,
+    "market_price_krw": 500000000,
+    "registry_type": "aggregate_building",
+    "mortgage_total_krw": 0,
+    "mortgage_items": [],
+    "registry_owner_name": "소유자A",
+    "contract_owner_name": "소유자A",
+    "critical_terms": [
+      {
+        "term": "가압류",
+        "is_cancelled": false
+      }
+    ],
+    "building_type": "공동주택",
+    "detail_use": "다세대주택",
+    "illegal_building_status": "absent",
+    "recent_jeonse_count": 0,
+    "recent_jeonse_peak_12m_count": 0,
+    "households": 0,
+    "recent_jeonse_data_status": "unavailable",
+    "senior_deposit_krw": null
+  },
+  "notes": "정답은 docs/전세사기위험도판별핵심로직.md의 판정 규칙과 배점표에서 손으로 도출했다. 엔진 출력이 아니다."
+}

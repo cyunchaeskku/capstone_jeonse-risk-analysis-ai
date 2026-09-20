@@ -1,0 +1,39 @@
+{
+  "case_id": "r2-registry-type-unknown",
+  "description": "등기부 미제출. 등기 기반 규칙이 전부 unknown으로 빠진다.",
+  "label_source": "synthetic_boundary",
+  "expected": {
+    "grade": "safe",
+    "rationale": "명세 §2 원칙: 모르면 unknown, 점수 0. R2·R4·R8이 등기부를 요구하므로 셋 다 unknown이 되고 총점 0이 된다.",
+    "checks": {
+      "deposit_to_market_ratio": "pass",
+      "mortgage_ratio": "unknown",
+      "owner_mismatch": "pass",
+      "rights_encumbrance": "unknown",
+      "residential_use": "pass",
+      "illegal_building": "pass",
+      "duplicate_contract": "unknown",
+      "senior_deposit": "unknown"
+    }
+  },
+  "payload": {
+    "listing_name": "[합성] 등기부 미제출. 등기 기반 규칙이 전부 unknown으로 빠진다.",
+    "deposit_krw": 100000000,
+    "market_price_krw": 500000000,
+    "registry_type": "unknown",
+    "mortgage_total_krw": 0,
+    "mortgage_items": [],
+    "registry_owner_name": "소유자A",
+    "contract_owner_name": "소유자A",
+    "critical_terms": [],
+    "building_type": "공동주택",
+    "detail_use": "다세대주택",
+    "illegal_building_status": "absent",
+    "recent_jeonse_count": 0,
+    "recent_jeonse_peak_12m_count": 0,
+    "households": 0,
+    "recent_jeonse_data_status": "unavailable",
+    "senior_deposit_krw": null
+  },
+  "notes": "정답은 docs/전세사기위험도판별핵심로직.md의 판정 규칙과 배점표에서 손으로 도출했다. 엔진 출력이 아니다."
+}
