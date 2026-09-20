@@ -119,6 +119,20 @@ _BUILDING_HUB_BASE_URL = "http://apis.data.go.kr/1613000/BldRgstHubService/getBr
 _BUILDING_HUB_ROWS = 1000
 
 
+class UpstreamUnavailable(HTTPException):
+    """외부 API 장애 → 502. 500이면 우리 서버 버그로 읽힌다.
+
+    미처리 예외는 CORSMiddleware 바깥에서 응답이 만들어져 CORS 헤더가 빠진다 →
+    브라우저가 네트워크 오류로 처리 → 프론트가 원인을 "서버 연결 불가"로 오표시.
+    """
+
+    def __init__(self, api_name: str) -> None:
+        super().__init__(
+            status_code=502,
+            detail=f"{api_name} 연동에 실패했습니다. 해당 기관 API가 응답하지 않아 잠시 후 다시 시도해 주세요.",
+        )
+
+
 def _normalize_text(value: str | None) -> str:
     if not value:
         return ""
@@ -339,11 +353,15 @@ async def _fetch_building_register_page(
     if ji:
         params["ji"] = ji
 
-    response = await client.get(
-        _BUILDING_HUB_BASE_URL,
-        params=params,
-        timeout=20.0,
-    )
+    try:
+        response = await client.get(
+            _BUILDING_HUB_BASE_URL,
+            params=params,
+            timeout=20.0,
+        )
+    except httpx.RequestError as exc:
+        logger.warning("건축물대장 API 연결 실패: %s", type(exc).__name__)
+        raise UpstreamUnavailable("건축물대장(국토교통부)") from exc
     if response.status_code != 200:
         return 0, []
 

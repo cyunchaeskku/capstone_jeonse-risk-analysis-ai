@@ -29,6 +29,8 @@ function ListingCheckPage() {
     'rounded-lg border border-coral/20 bg-white px-3 py-2 text-sm text-ink placeholder:text-slate-400 focus:border-coral focus:outline-none';
 
   const selectedRentItem = rentItems.length > 0 ? rentItems[0] : null;
+  // 거래 0건과 조회 실패를 구분. 백엔드 lookup_status: complete / partial / unavailable
+  const rentLookupFailed = searchResult?.rent?.lookup_status === 'unavailable';
   const activeBuilding = selectedBuilding || searchResult?.building?.selected || null;
   const marketPriceKrw = Number(searchResult?.market_price?.price_krw || 0);
   const selectedDepositKrw = selectedRentItem ? parseManwon(selectedRentItem.deposit) * 10000 : 0;
@@ -388,6 +390,10 @@ function ListingCheckPage() {
                   <p><span className="text-slate-500">층수:</span> {rentItems[0].floor}층</p>
                 </div>
               </div>
+            ) : rentLookupFailed ? (
+              <p className="rounded-lg border border-dashed border-coral/40 bg-sand px-3 py-3 text-sm text-coral">
+                실거래가(국토교통부) API 연동에 실패했습니다. 거래 내역을 불러오지 못했습니다.
+              </p>
             ) : (
               <p className="rounded-lg border border-dashed border-coral/20 bg-sand px-3 py-3 text-sm text-slate-500">
                 조회된 전월세 거래 내역이 없습니다.
