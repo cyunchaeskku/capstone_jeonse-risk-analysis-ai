@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from .auth import router as auth_router
 from .chatbot import ChatbotService
 from .building_register_inspector import inspect_building_register_pdf
 from .registry_inspector import inspect_registry_text
@@ -57,6 +58,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
 
 service = AnalysisService()
 chatbot_service = ChatbotService()

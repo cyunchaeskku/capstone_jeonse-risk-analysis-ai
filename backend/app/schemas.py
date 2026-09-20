@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 RiskLevel = Literal["low", "medium", "high"]
@@ -235,3 +235,29 @@ class RiskAssessResponse(BaseModel):
     risk_grade: RiskGrade
     override_reasons: list[str] = Field(default_factory=list)
     llm_explanation: str
+
+
+class SignupRequest(BaseModel):
+    email: str = Field(..., max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    # 하한은 NIST SP 800-63B 권장(8자). 상한이 없으면 긴 입력으로 해시 연산을 과부하시킬 수 있다.
+    password: str = Field(..., min_length=8, max_length=128)
+    name: str = Field(..., min_length=1, max_length=50)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(..., max_length=254)
+    password: str = Field(..., max_length=128)
+
+
+class UserResponse(BaseModel):
+    # FastAPI가 SQLAlchemy User 객체를 그대로 직렬화할 수 있게 한다.
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    name: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    user: UserResponse
