@@ -27,6 +27,10 @@ function SignupPage() {
       await signup(email, password, name);
       navigate('/');
     } catch (err) {
+      if (err.signupCompleted) {
+        navigate('/login', { state: { notice: err.message } });
+        return;
+      }
       setError(err.message);
     } finally {
       setSubmitting(false);

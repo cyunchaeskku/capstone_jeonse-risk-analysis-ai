@@ -6,12 +6,13 @@ from datetime import datetime, timedelta, timezone
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from . import rate_limit
 from .db import get_db
 from .models import User, UserSession
 from .schemas import LoginRequest, LoginResponse, SignupRequest, UserResponse
@@ -70,7 +71,10 @@ def get_current_user(session: UserSession = Depends(_current_session)) -> User:
 
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> User:
+def signup(payload: SignupRequest, request: Request, db: Session = Depends(get_db)) -> User:
+    # 가입도 같은 비용(64MiB)의 해시를 돌린다. 여기를 빼면 공격이 이쪽으로 옮겨온다.
+    rate_limit.enforce_ip(request)
+
     user = User(
         email=payload.email.strip().lower(),
         password_hash=_hasher.hash(payload.password),
@@ -90,8 +94,14 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> User:
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
-    user = db.scalar(select(User).where(User.email == payload.email.strip().lower()))
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> LoginResponse:
+    email = payload.email.strip().lower()
+
+    # 해시 전에 검사해야 무차별 대입과 메모리 고갈이 동시에 막힌다.
+    rate_limit.enforce_ip(request)
+    rate_limit.enforce_email(email)
+
+    user = db.scalar(select(User).where(User.email == email))
 
     if user is None:
         # 계정이 있는지 알아내지 못하게, 없는 이메일이어도 같은 비용의 검증을 수행한다.
@@ -99,12 +109,17 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
             _hasher.verify(_DUMMY_HASH, payload.password)
         except VerifyMismatchError:
             pass
+        # 없는 이메일도 같이 누적해야 429 발생 시점으로 가입 여부가 드러나지 않는다.
+        rate_limit.record_failure(email)
         raise _unauthorized(_INVALID_CREDENTIALS)
 
     try:
         _hasher.verify(user.password_hash, payload.password)
     except VerifyMismatchError:
+        rate_limit.record_failure(email)
         raise _unauthorized(_INVALID_CREDENTIALS)
+
+    rate_limit.clear_failures(email)
 
     # 해시 파라미터 권장값이 올라가면 로그인하는 김에 새 파라미터로 다시 저장한다.
     if _hasher.check_needs_rehash(user.password_hash):

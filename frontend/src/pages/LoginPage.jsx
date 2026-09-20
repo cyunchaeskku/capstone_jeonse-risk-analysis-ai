@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const inputCls =
@@ -8,6 +8,8 @@ const inputCls =
 function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  // 가입 후 자동 로그인이 실패했을 때 SignupPage가 넘기는 안내
+  const notice = useLocation().state?.notice;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -32,6 +34,7 @@ function LoginPage() {
       <section className="rounded-2xl border border-coral/15 bg-white p-6 shadow-sm">
         <p className="text-xs font-semibold tracking-[0.12em] text-coral uppercase">로그인</p>
         <h1 className="mt-2 text-xl font-semibold text-ink">다시 오셨군요</h1>
+        {notice ? <p className="mt-3 text-xs text-ink">{notice}</p> : null}
         <form className="mt-5 flex flex-col gap-3" onSubmit={handleSubmit}>
           <input
             type="email"
