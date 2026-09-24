@@ -1,5 +1,7 @@
 # AI 기반 전세 계약 사기 예방 및 법률 지원 시스템
 
+## 🔗 배포 사이트 — https://capstone-jeonse-risk-analysis-ai.vercel.app
+
 ![system architecture diagram](img/architecture_diagram.png)
 
 이 프로젝트는 전세 계약 과정에서 발생할 수 있는 사기 위험을 줄이고, 사용자가 계약 전후에 필요한 정보를 빠르게 확인할 수 있도록 돕는 시스템이다.  
