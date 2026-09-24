@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -28,6 +29,26 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_VECTOR_DB_PATH = Path(__file__).resolve().parents[2] / "vectorDB" / "laws_faiss"
 OFFICIAL_LAW_BASE_URL = "https://www.law.go.kr/법령"
 OFFICIAL_PRECEDENT_BASE_URL = "https://www.law.go.kr/precInfoP.do?precSeq="
+
+# 재순위: 넓게 뽑아 LLM으로 다시 세운 뒤 top_k만 넣는다.
+# eval/run_rag_configs.py에서 측정한 구성 그대로다 — 바꾸면 측정치가 무효가 된다.
+RERANK_MODEL = "gpt-4.1-mini"
+RERANK_POOL = 20
+RERANK_EXCERPT = 600
+PRECEDENT_FETCH_RATIO = 4  # 판례 1건이 여러 청크 → 후보 20건 확보용 여유
+
+RERANK_PROMPT = """
+너는 법률 질문에 답하는 RAG의 재순위기다.
+질문과 검색 후보 목록을 받아, 질문에 답할 근거로서 쓸모 있는 순서로 다시 세운다.
+
+기준:
+- 질문이 묻는 쟁점을 직접 다루는 문서가 위다.
+- 질문에 쓰인 단어가 들어 있다는 이유만으로 올리지 않는다. 쟁점이 맞아야 한다.
+- 일반론보다 그 쟁점을 정면으로 판단한 것이 위다.
+
+출력은 JSON 객체 하나다. 입력에 있는 번호를 하나도 빠짐없이, 좋은 순서대로 넣는다.
+{"ranked": [번호, 번호, ...]}
+""".strip()
 
 CASUAL_HINTS = (
     "이름이 뭐",
@@ -343,15 +364,50 @@ class ChatbotService:
             LOGGER.exception("Vector similarity search failed for question=%r", question)
             return []
 
+    def _rerank(self, question: str, candidates: list[tuple]) -> list[tuple]:
+        """후보(label, doc, score)를 LLM으로 다시 세운다. 실패하면 벡터 순서를 그대로 쓴다."""
+        if len(candidates) < 2:
+            return candidates
+
+        items = [
+            {"번호": index, "문서": label, "내용": doc.page_content[-RERANK_EXCERPT:]}
+            for index, (label, doc, _) in enumerate(candidates, start=1)
+        ]
+        payload = json.dumps({"질문": question, "후보": items}, ensure_ascii=False)
+
+        try:
+            model = ChatOpenAI(
+                model=RERANK_MODEL,
+                api_key=settings.openai_api_key,
+                temperature=0,
+                model_kwargs={"response_format": {"type": "json_object"}},
+            )
+            response = model.invoke(
+                [SystemMessage(content=RERANK_PROMPT), HumanMessage(content=payload)]
+            )
+            ranked = json.loads(response.content)["ranked"]
+        except Exception:  # pragma: no cover - 재순위 실패는 검색 실패가 아니다
+            LOGGER.exception("Rerank failed for question=%r; keeping vector order", question)
+            return candidates
+
+        picked, used = [], set()
+        for number in ranked:
+            if isinstance(number, int) and 1 <= number <= len(candidates) and number not in used:
+                used.add(number)
+                picked.append(candidates[number - 1])
+        # 모델이 빠뜨린 후보는 원래 순서로 뒤에 채운다
+        picked += [item for index, item in enumerate(candidates, start=1) if index not in used]
+        return picked
+
     def _retrieve_law_sources(self, question: str) -> list[LegalSourceRecord]:
         vectorstore = self._get_vectorstore()
         if vectorstore is None:
             return []
 
-        sources: list[LegalSourceRecord] = []
+        candidates: list[tuple] = []
         seen_labels: set[str] = set()
 
-        for doc, score in self._search(vectorstore, question, self._top_k):
+        for doc, score in self._search(vectorstore, question, RERANK_POOL):
             metadata = doc.metadata or {}
             citation_label = _clean_text(metadata.get("citation_label")) or _clean_text(
                 f"{metadata.get('law_name', '')} {metadata.get('article_number') or metadata.get('jo_code') or ''}"
@@ -360,6 +416,11 @@ class ChatbotService:
                 continue
 
             seen_labels.add(citation_label)
+            candidates.append((citation_label, doc, score))
+
+        sources: list[LegalSourceRecord] = []
+        for citation_label, doc, score in self._rerank(question, candidates)[: self._top_k]:
+            metadata = doc.metadata or {}
             body = _strip_law_header(doc.page_content)
 
             sources.append(
@@ -383,16 +444,16 @@ class ChatbotService:
         return sources
 
     def _retrieve_precedent_sources(self, question: str) -> list[LegalSourceRecord]:
-        """판례는 한 건이 여러 청크라, 넉넉히 꺼낸 뒤 판례 단위로 묶어 상위 N건만 남긴다."""
+        """판례는 한 건이 여러 청크라, 넉넉히 꺼내 판례 단위로 묶고 재순위 후 상위 N건만 남긴다."""
         vectorstore = self._get_precedent_vectorstore()
         if vectorstore is None:
             return []
 
-        sources: list[LegalSourceRecord] = []
+        candidates: list[tuple] = []
         seen_ids: set[str] = set()
 
-        for doc, score in self._search(vectorstore, question, self._precedent_top_k * 3):
-            if len(sources) >= self._precedent_top_k:
+        for doc, score in self._search(vectorstore, question, RERANK_POOL * PRECEDENT_FETCH_RATIO):
+            if len(candidates) >= RERANK_POOL:
                 break
 
             metadata = doc.metadata or {}
@@ -405,6 +466,12 @@ class ChatbotService:
                 continue
 
             seen_ids.add(precedent_id)
+            candidates.append((citation_label, doc, score))
+
+        sources: list[LegalSourceRecord] = []
+        for citation_label, doc, score in self._rerank(question, candidates)[: self._precedent_top_k]:
+            metadata = doc.metadata or {}
+            precedent_id = metadata.get("precedent_id")
             body = _strip_precedent_header(doc.page_content)
 
             sources.append(
